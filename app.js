@@ -83,18 +83,53 @@ $('btnVerify').onclick = async () => {
 const GENERIC = new Set(['info', 'admin', 'hr', 'contact', 'sales', 'support', 'team', 'office',
   'careers', 'career', 'hello', 'hi', 'mail', 'email', 'enquiry', 'enquiries', 'inquiry', 'help',
   'service', 'services', 'accounts', 'account', 'billing', 'noreply', 'no-reply', 'marketing',
-  'general', 'desk', 'reception', 'md', 'ceo', 'the', 'and']);
+  'general', 'desk', 'reception', 'md', 'ceo', 'the', 'and',
+  'research', 'purchase', 'procurement', 'export', 'exports', 'import', 'imports', 'qa', 'qc',
+  'rnd', 'lab', 'labs', 'factory', 'works', 'plant', 'store', 'stores', 'legal', 'finance']);
+
+/* Fragments that mark a mailbox as a company rather than a person. */
+const COMPANYISH = /(chem|pharma|biotech|agro|tech|studio|mktg|marketing|exports?|industr|solutions?|systems?|enterprises?|traders?|group|intl|international|medipro|polymer|labs?)$/i;
 
 const titleCase = s => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 
+/**
+ * Pull a salutation out of the local part of an address.
+ *
+ * Returns a confidence alongside the name. `low` does NOT mean the name is
+ * wrong - "harvinder@" and "sreesanth@" are perfectly good first names - it
+ * means there is no separator to confirm where a first name ends, so the guess
+ * deserves a human glance before it reaches a real inbox. The UI flags these
+ * rather than silently rewriting them.
+ */
 function parseName(email) {
   const local = String(email).split('@')[0] || '';
+  const stripped = local.replace(/[0-9]+/g, '');
+  const hasSeparator = /[._\-+]/.test(stripped) || /[a-z][A-Z]/.test(local);
+
   let tokens = local.replace(/[0-9]+/g, ' ').split(/[._\-+\s]+/).filter(Boolean);
   tokens = tokens.flatMap(t => t.replace(/([a-z])([A-Z])/g, '$1 $2').split(' ')).filter(Boolean);
   const named = tokens.filter(t => !GENERIC.has(t.toLowerCase()) && t.length > 1);
-  if (!named.length) return { first: '', full: '', generic: true };
+  if (!named.length) return { first: '', full: '', generic: true, confidence: 'none' };
+
   const parts = named.slice(0, 2).map(titleCase);
-  return { first: parts[0], full: parts.join(' '), generic: false };
+  const first = parts[0];
+
+  let confidence = 'high';
+  // A digit sitting between letters is not a real separator: zoom2animus is
+  // one handle, not "Zoom" the person.
+  const digitSplit = /[a-z][0-9]+[a-z]/i.test(local);
+  // A title glued to the name reads badly as a greeting: "Hi Drdjha,".
+  const titlePrefix = /^(dr|mr|mrs|ms|prof|capt)[a-z]/i.test(first) && first.length > 3;
+
+  if (titlePrefix || digitSplit) {
+    confidence = 'low';
+  } else if (!hasSeparator) {
+    if (COMPANYISH.test(first)) confidence = 'low';       // looks like a company
+    else if (first.length >= 8) confidence = 'low';        // probably first+last run together
+    else if (first.length <= 3) confidence = 'low';        // initials
+  }
+
+  return { first, full: parts.join(' '), generic: false, confidence };
 }
 
 $('btnParse').onclick = () => {
@@ -110,24 +145,33 @@ $('btnParse').onclick = () => {
   renderRecipients();
   const dupes = found.length - recipients.length;
   const generic = recipients.filter(x => x.generic).length;
+  const low = recipients.filter(x => !x.generic && x.confidence === 'low').length;
   say($('parseMsg'),
     recipients.length + ' unique email(s)'
     + (dupes ? ' · ' + dupes + ' duplicate(s) removed' : '')
     + ' · ' + (recipients.length - generic) + ' name(s) parsed'
-    + (generic ? ' · ' + generic + ' will use the fallback name' : ''),
+    + (generic ? ' · ' + generic + ' will use the fallback name' : '')
+    + (low ? ' · ⚠ ' + low + ' name(s) need a check before sending' : ''),
     recipients.length > 0);
 };
 
 function renderRecipients() {
   const tb = document.querySelector('#recTable tbody');
-  tb.innerHTML = recipients.map((r, i) =>
-    '<tr class="' + (r.generic ? 'generic' : '') + '">'
+  tb.innerHTML = recipients.map((r, i) => {
+    const low = !r.generic && r.confidence === 'low';
+    const badge = r.generic
+      ? '<span class="badge g">generic inbox</span>'
+      : low
+        ? '<span class="badge w" title="No separator in the address, so this may be a full name run together, initials, or a company. Check it.">check this name</span>'
+        : '<span class="badge p">from email id</span>';
+    return '<tr class="' + (r.generic ? 'generic' : low ? 'lowconf' : '') + '">'
     + '<td>' + (i + 1) + '</td>'
     + '<td>' + esc(r.email) + '</td>'
     + '<td><input data-i="' + i + '" class="nm" value="' + esc(r.first) + '" placeholder="' + esc($('fallbackName').value) + '"/></td>'
-    + '<td>' + (r.generic ? '<span class="badge g">generic inbox</span>' : '<span class="badge p">from email id</span>') + '</td>'
+    + '<td>' + badge + '</td>'
     + '<td><button data-del="' + i + '">✕</button></td>'
-    + '</tr>').join('');
+    + '</tr>';
+  }).join('');
 
   tb.querySelectorAll('.nm').forEach(inp => inp.oninput = () => {
     const i = +inp.dataset.i, v = inp.value.trim();
@@ -366,6 +410,16 @@ async function sentAddresses() {
 $('btnStop').onclick = () => {
   stopRequested = true;
   say($('sendMsg'), 'Stopping after the current email…', false);
+};
+
+$('btnFallbackFlagged').onclick = () => {
+  const flagged = recipients.filter(r => !r.generic && r.confidence === 'low');
+  if (!flagged.length) return say($('parseMsg'), 'No flagged names to replace.', true);
+  if (!confirm('Replace ' + flagged.length + ' flagged name(s) with the fallback greeting "'
+      + ($('fallbackName').value || 'there') + '"?')) return;
+  flagged.forEach(r => { r.first = ''; r.full = ''; r.generic = true; });
+  renderRecipients();
+  say($('parseMsg'), flagged.length + ' flagged name(s) now use the fallback greeting.', true);
 };
 
 $('btnSkipSent').onclick = async () => {
