@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>MailBlaster</title>
+<link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">📮 <span>MailBlaster</span></div>
+  <nav class="tabs">
+    <button class="tab active" data-tab="s1">1 · Gmail</button>
+    <button class="tab" data-tab="s2">2 · Recipients</button>
+    <button class="tab" data-tab="s3">3 · Compose</button>
+    <button class="tab" data-tab="s4">4 · Analytics</button>
+  </nav>
+</header>
+
+<main>
+
+<!-- ============ SECTION 1 : GMAIL APP PASSWORD ============ -->
+<section id="s1" class="panel active">
+  <h2>Section 1 — Gmail App Password</h2>
+  <p class="hint">Use a Google <b>App Password</b> (16 characters), not your normal password.
+     Enable 2-Step Verification, then create one at
+     <span class="mono">myaccount.google.com → Security → App passwords</span>.</p>
+
+  <div class="grid2">
+    <label>Gmail address
+      <input id="gUser" type="email" placeholder="you@gmail.com" autocomplete="username"/>
+    </label>
+    <label>App password
+      <input id="gPass" type="password" placeholder="abcd efgh ijkl mnop" autocomplete="current-password"/>
+    </label>
+    <label>Display name (From)
+      <input id="fromName" type="text" placeholder="Aditya Jha"/>
+    </label>
+    <label>Reply-To (optional)
+      <input id="replyTo" type="email" placeholder="reply@company.com"/>
+    </label>
+  </div>
+
+  <label class="inline"><input id="remember" type="checkbox" checked/> Remember on this browser (stored locally)</label>
+
+  <div class="row">
+    <button id="btnVerify" class="primary">Verify connection</button>
+    <span id="verifyMsg" class="msg"></span>
+  </div>
+</section>
+
+<!-- ============ SECTION 2 : RECIPIENTS + SALUTATIONS ============ -->
+<section id="s2" class="panel">
+  <h2>Section 2 — Recipients &amp; Salutations</h2>
+  <p class="hint">Paste email IDs in any format — commas, spaces, new lines, or copied from a sheet.
+     Names are parsed from the email ID itself and used as <span class="mono">{{name}}</span>.</p>
+
+  <textarea id="rawEmails" rows="8" placeholder="aditya.jha@acme.com, priya_sharma@xyz.in
+rahul.verma99@gmail.com
+info@somecompany.com"></textarea>
+
+  <div class="row">
+    <button id="btnParse" class="primary">Parse emails &amp; names</button>
+    <label class="inline">Fallback name
+      <input id="fallbackName" type="text" value="there" style="width:120px"/>
+    </label>
+    <span id="parseMsg" class="msg"></span>
+  </div>
+
+  <div class="tablewrap">
+    <table id="recTable">
+      <thead><tr><th>#</th><th>Email</th><th>Parsed name (editable)</th><th>Source</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ SECTION 3 : COMPOSE ============ -->
+<section id="s3" class="panel">
+  <h2>Section 3 — Compose, Footer &amp; Attachments</h2>
+
+  <div class="grid2">
+    <label>Subject
+      <input id="subject" type="text" placeholder="Quick note for {{name}}"/>
+    </label>
+    <label>Greeting line
+      <input id="greeting" type="text" value="Hi {{name}},"/>
+    </label>
+  </div>
+
+  <h3>Email body <small>(rich text — bold / highlight / links)</small></h3>
+  <div class="toolbar">
+    <button data-cmd="bold"><b>B</b></button>
+    <button data-cmd="italic"><i>I</i></button>
+    <button data-cmd="underline"><u>U</u></button>
+    <button data-cmd="hilite" class="hl">Highlight</button>
+    <button data-cmd="fore">Text colour</button>
+    <input type="color" id="foreColor" value="#d32f2f" title="Text colour"/>
+    <input type="color" id="hlColor" value="#fff59d" title="Highlight colour"/>
+    <span class="sep"></span>
+    <button data-cmd="insertUnorderedList">• List</button>
+    <button data-cmd="insertOrderedList">1. List</button>
+    <button data-cmd="createLink">🔗 Link</button>
+    <button data-cmd="removeFormat">Clear</button>
+    <span class="sep"></span>
+    <button data-chip="{{name}}" class="chip">{{name}}</button>
+    <button data-chip="{{full_name}}" class="chip">{{full_name}}</button>
+    <button data-chip="{{email}}" class="chip">{{email}}</button>
+    <span class="sep"></span>
+    <button id="btnHtmlView">&lt;/&gt; HTML</button>
+  </div>
+  <div id="editor" class="editor" contenteditable="true"><p>Write your message here. Select text and hit <b>B</b> or <b>Highlight</b>.</p></div>
+  <textarea id="htmlSource" class="editor hidden" rows="10"></textarea>
+
+  <h3>Ending greeting</h3>
+  <textarea id="closing" rows="3" placeholder="Warm regards,&#10;Aditya Jha&#10;Coherent Market Insights"></textarea>
+
+  <h3>Footer <small>(HTML — signature, disclaimer, links)</small></h3>
+  <textarea id="footerHtml" rows="4" placeholder="&lt;p style='font-size:12px;color:#777'&gt;Coherent Market Insights · Pune · &lt;a href='https://example.com'&gt;Unsubscribe&lt;/a&gt;&lt;/p&gt;"></textarea>
+
+  <h3>Attachments <small>(PDF or any file, up to 10 × 20 MB)</small></h3>
+  <input id="files" type="file" multiple/>
+  <div id="fileList" class="filelist"></div>
+
+  <div class="row">
+    <label class="inline">Delay between mails (ms)
+      <input id="delayMs" type="number" value="800" min="0" step="100" style="width:100px"/>
+    </label>
+    <button id="btnPreview">Preview first email</button>
+    <button id="btnSend" class="primary">Send campaign</button>
+    <span id="sendMsg" class="msg"></span>
+  </div>
+
+  <div id="progressWrap" class="hidden">
+    <div class="bar"><div id="bar" class="fill"></div></div>
+    <div id="progressText" class="hint"></div>
+  </div>
+
+  <div id="preview" class="preview hidden"></div>
+</section>
+
+<!-- ============ SECTION 4 : ANALYTICS ============ -->
+<section id="s4" class="panel">
+  <h2>Section 4 — Analytics</h2>
+  <p class="hint" id="logSource">Source: —</p>
+  <div class="row">
+    <button id="btnRefresh" class="primary">Refresh</button>
+    <button id="btnExport">Export CSV</button>
+    <button id="btnClear" class="danger">Clear history</button>
+    <input id="search" type="search" placeholder="Search email / subject…"/>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><span id="stTotal">0</span><label>Total attempted</label></div>
+    <div class="stat ok"><span id="stSent">0</span><label>Delivered</label></div>
+    <div class="stat bad"><span id="stFailed">0</span><label>Failed</label></div>
+    <div class="stat"><span id="stRate">0%</span><label>Success rate</label></div>
+  </div>
+
+  <h3>Per day</h3>
+  <div id="chart" class="chart"></div>
+
+  <h3>Sent log</h3>
+  <div class="tablewrap">
+    <table id="logTable">
+      <thead><tr><th>Time</th><th>To</th><th>Name</th><th>Subject</th><th>Attachments</th><th>Status</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+</main>
+<script src="app.js"></script>
+</body>
+</html>

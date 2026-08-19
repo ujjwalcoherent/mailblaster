@@ -1,0 +1,16 @@
+{
+  "name": "mailblaster",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Gmail bulk mailer with name parsing, rich-text body, attachments and analytics",
+  "scripts": {
+    "dev": "node dev-server.js",
+    "start": "node dev-server.js"
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.14"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}
