@@ -7,7 +7,7 @@
  * live per-recipient progress for free. No queue, no job state, no server.
  */
 const nodemailer = require('nodemailer');
-const { readJson, send, render, stripHtml } = require('../lib/util');
+const { readJson, send, render, stripHtml, gmailTransport } = require('../lib/util');
 const store = require('../lib/store');
 
 module.exports = async function handler(req, res) {
@@ -50,12 +50,7 @@ module.exports = async function handler(req, res) {
     error: null,
   };
 
-  const t = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
-    auth: { user: b.user, pass: String(b.pass).replace(/\s+/g, '') },
-  });
+  const t = gmailTransport(nodemailer, b.user, b.pass, b.port);
 
   try {
     const info = await t.sendMail({

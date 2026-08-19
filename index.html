@@ -40,6 +40,12 @@
     <label>Reply-To (optional)
       <input id="replyTo" type="email" placeholder="reply@company.com"/>
     </label>
+    <label>SMTP port
+      <select id="smtpPort">
+        <option value="465">465 — SSL (default)</option>
+        <option value="587">587 — STARTTLS (use if 465 is blocked)</option>
+      </select>
+    </label>
   </div>
 
   <label class="inline"><input id="remember" type="checkbox" checked/> Remember on this browser (stored locally)</label>

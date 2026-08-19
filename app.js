@@ -17,13 +17,30 @@ function say(el, text, ok) {
   el.className = 'msg ' + (ok ? 'ok' : 'bad');
 }
 
+/* Turn the raw SMTP/socket error into something actionable. */
+function hintFor(r) {
+  const e = String((r && r.error) || '');
+  if (/EACCES|ECONNREFUSED|ETIMEDOUT|ENETUNREACH/i.test(e)) {
+    return '  — the connection was blocked before reaching Google. Try SMTP port 587, '
+      + 'or check a firewall/VPN/antivirus on this machine.';
+  }
+  if (/535|Username and Password not accepted/i.test(e)) {
+    return '  — Google rejected the login. Use a 16-character App Password (not your normal one); '
+      + 'on a Workspace domain the admin must also allow SMTP access.';
+  }
+  if (/534|application-specific/i.test(e)) {
+    return '  — this account needs 2-Step Verification enabled and an App Password.';
+  }
+  return '';
+}
+
 /* ================= SECTION 1 — Gmail app password ================= */
 
 const CRED_KEY = 'mailblaster.creds';
 (function restore() {
   try {
     const c = JSON.parse(localStorage.getItem(CRED_KEY) || '{}');
-    ['gUser', 'gPass', 'fromName', 'replyTo'].forEach(k => { if (c[k]) $(k).value = c[k]; });
+    ['gUser', 'gPass', 'fromName', 'replyTo', 'smtpPort'].forEach(k => { if (c[k]) $(k).value = c[k]; });
   } catch (e) {}
 })();
 
@@ -33,13 +50,14 @@ function creds() {
     gPass: $('gPass').value.trim(),
     fromName: $('fromName').value.trim(),
     replyTo: $('replyTo').value.trim(),
+    smtpPort: $('smtpPort').value,
   };
 }
 function persist() {
   if ($('remember').checked) localStorage.setItem(CRED_KEY, JSON.stringify(creds()));
   else localStorage.removeItem(CRED_KEY);
 }
-['gUser', 'gPass', 'fromName', 'replyTo', 'remember'].forEach(id => $(id).addEventListener('change', persist));
+['gUser', 'gPass', 'fromName', 'replyTo', 'smtpPort', 'remember'].forEach(id => $(id).addEventListener('change', persist));
 
 $('btnVerify').onclick = async () => {
   const b = $('btnVerify');
@@ -50,9 +68,9 @@ $('btnVerify').onclick = async () => {
     const r = await fetch('/api/verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user: c.gUser, pass: c.gPass }),
+      body: JSON.stringify({ user: c.gUser, pass: c.gPass, port: c.smtpPort }),
     }).then(x => x.json());
-    say($('verifyMsg'), r.ok ? '✓ ' + r.message : '✗ ' + r.error, r.ok);
+    say($('verifyMsg'), r.ok ? '✓ ' + r.message : '✗ ' + r.error + hintFor(r), r.ok);
     persist();
   } catch (e) {
     say($('verifyMsg'), '✗ ' + e.message, false);
@@ -247,7 +265,7 @@ $('btnSend').onclick = async () => {
 
   const attachments = await Promise.all(files.map(readFileB64));
   const base = {
-    user: c.gUser, pass: c.gPass, fromName: c.fromName, replyTo: c.replyTo,
+    user: c.gUser, pass: c.gPass, port: c.smtpPort, fromName: c.fromName, replyTo: c.replyTo,
     subject: $('subject').value,
     greeting: $('greeting').value,
     bodyHtml: bodyHtml(),
