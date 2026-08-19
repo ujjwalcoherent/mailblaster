@@ -100,3 +100,15 @@ tr.generic td{background:#fffbe9}
 .imgprev .lbl{font-size:11.5px;color:var(--muted);margin-top:5px}
 
 .hint.warn{background:#fff8e6;border:1px solid #f5e2a8;border-radius:8px;padding:9px 12px;color:#7a5c00}
+
+.modal{position:fixed;inset:0;background:rgba(18,24,40,.55);display:flex;align-items:center;
+  justify-content:center;padding:24px;z-index:50}
+.modalbox{background:#fff;border-radius:12px;width:100%;max-width:760px;max-height:88vh;
+  display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(15,23,42,.28)}
+.modalhead{display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:16px 20px;border-bottom:1px solid var(--line)}
+.modalhead h3{margin:0;text-transform:none;letter-spacing:0;font-size:16px;color:var(--ink)}
+.modalmeta{padding:12px 20px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--muted);background:#f8f9fd}
+.modalcontent{padding:20px;overflow:auto}
+.modalcontent img{max-width:100%;height:auto}
+#logTable .view{padding:3px 10px;font-size:12px}

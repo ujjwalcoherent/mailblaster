@@ -314,6 +314,41 @@ window.addEventListener('beforeunload', e => {
   return e.returnValue;
 });
 
+/* Most recent delivered email for each of the given addresses, taken from the
+   log already loaded into Section 4. */
+function previousSendsFor(emails) {
+  const want = new Set(emails);
+  const out = {};
+  for (const e of logCache) {                 // logCache is newest-first
+    const to = String(e.to).toLowerCase();
+    if (e.status === 'sent' && want.has(to) && !out[to]) out[to] = e;
+  }
+  return out;
+}
+
+/* Show the exact message a recipient received, merge tags already resolved. */
+function viewSent(i) {
+  const e = logCache[i];
+  if (!e) return;
+  $('modalTitle').textContent = e.subject || '(no subject)';
+  $('modalMeta').innerHTML =
+    '<b>To:</b> ' + esc(e.to) + ' &nbsp;&middot;&nbsp; <b>From:</b> ' + esc(e.from)
+    + ' &nbsp;&middot;&nbsp; ' + new Date(e.time).toLocaleString()
+    + ' &nbsp;&middot;&nbsp; <span class="badge ' + e.status + '">' + e.status + '</span>'
+    + (e.attachments && e.attachments.length
+        ? ' &nbsp;&middot;&nbsp; attached: ' + e.attachments.map(esc).join(', ') : '')
+    + (e.error ? '<br/><span class="msg bad">' + esc(e.error) + '</span>' : '');
+  $('modalBody').innerHTML = e.body
+    ? e.body
+    : '<p class="hint">The body was not recorded for this send &mdash; it predates body logging.</p>';
+  $('modal').classList.remove('hidden');
+}
+
+function closeModal() { $('modal').classList.add('hidden'); }
+$('modalClose').onclick = closeModal;
+$('modal').onclick = e => { if (e.target.id === 'modal') closeModal(); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
 /* Every address that has ever been delivered, from whichever log is live. */
 async function sentAddresses() {
   const out = new Set();
@@ -375,12 +410,19 @@ $('btnSend').onclick = async () => {
   const delivered = await sentAddresses();
   const repeats = recipients.filter(r => delivered.has(r.email));
   if (repeats.length) {
-    const preview = repeats.slice(0, 5).map(r => r.email).join('\n');
+    const prev = previousSendsFor(repeats.map(r => r.email));
+    const preview = repeats.slice(0, 5).map(r => {
+      const p = prev[r.email];
+      return p
+        ? r.email + '  ->  "' + p.subject + '"  sent ' + new Date(p.time).toLocaleDateString()
+        : r.email;
+    }).join('\n');
     const answer = confirm(
       repeats.length + ' of these have already been delivered to previously:\n\n' + preview
       + (repeats.length > 5 ? '\n…and ' + (repeats.length - 5) + ' more' : '')
       + '\n\nOK = skip them and send to the other ' + (recipients.length - repeats.length)
-      + '\nCancel = send to everyone anyway (they get it twice)');
+      + '\nCancel = send to everyone anyway (they get it twice)'
+      + '\n\nTo read the exact email they received, cancel and open Section 4, then View.');
     if (answer) {
       recipients = recipients.filter(r => !delivered.has(r.email));
       renderRecipients();
@@ -543,7 +585,10 @@ function renderLog() {
     + '<td>' + esc(e.subject) + '</td>'
     + '<td>' + (e.attachments && e.attachments.length ? '📎 ' + e.attachments.length : '—') + '</td>'
     + '<td><span class="badge ' + e.status + '" title="' + esc(e.error || '') + '">' + e.status + '</span></td>'
-    + '</tr>').join('') || '<tr><td colspan="6">Nothing to show.</td></tr>';
+    + '<td><button class="view" data-i="' + logCache.indexOf(e) + '">View</button></td>'
+    + '</tr>').join('') || '<tr><td colspan="7">Nothing to show.</td></tr>';
+
+  document.querySelectorAll('#logTable .view').forEach(b => b.onclick = () => viewSent(+b.dataset.i));
 }
 
 $('search').oninput = renderLog;

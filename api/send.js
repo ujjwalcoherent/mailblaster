@@ -75,6 +75,7 @@ module.exports = async function handler(req, res) {
     attachments: (b.attachments || []).map(a => a.filename),
     status: 'failed',
     error: null,
+    body: html,          // exactly what this person received, after merge tags
   };
 
   const t = gmailTransport(nodemailer, b.user, b.pass, b.port);

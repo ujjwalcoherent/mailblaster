@@ -79,7 +79,9 @@ De-duplication happens at three points:
 
 1. **On parse** — repeated addresses in the pasted list are collapsed, case-insensitively, and the count of removed duplicates is reported.
 2. **On send** — a final pass catches duplicates introduced by editing rows after parsing.
-3. **Against history** — anyone already delivered to in a previous run is detected before sending, listed, and you choose whether to skip them or deliberately send again.
+3. **Against history** — anyone already delivered to in a previous run is detected before sending. The warning names each one *with the subject they received and the date*, so the choice to re-send is informed rather than blind. You can skip them or deliberately send again.
+
+To see exactly what someone got, Section 4 → **View** on their row opens the delivered message, rendered as they saw it — merge tags resolved, bold and highlighting intact, attachments listed. The full body of every send is stored, so this works retrospectively.
 
 **Skip already-sent** in Section 2 does step 3 on demand, which is how you resume an interrupted campaign: re-paste the whole list, parse, skip, send.
 

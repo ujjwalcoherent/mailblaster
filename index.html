@@ -196,13 +196,26 @@ info@somecompany.com"></textarea>
   <h3>Sent log</h3>
   <div class="tablewrap">
     <table id="logTable">
-      <thead><tr><th>Time</th><th>To</th><th>Name</th><th>Subject</th><th>Attachments</th><th>Status</th></tr></thead>
+      <thead><tr><th>Time</th><th>To</th><th>Name</th><th>Subject</th><th>Attachments</th><th>Status</th><th>Sent mail</th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
 </section>
 
 </main>
+
+<!-- viewer for a message that was actually sent -->
+<div id="modal" class="modal hidden">
+  <div class="modalbox">
+    <div class="modalhead">
+      <h3 id="modalTitle">Sent email</h3>
+      <button id="modalClose">Close</button>
+    </div>
+    <div id="modalMeta" class="modalmeta"></div>
+    <div id="modalBody" class="modalcontent"></div>
+  </div>
+</div>
+
 <script src="app.js"></script>
 </body>
 </html>
