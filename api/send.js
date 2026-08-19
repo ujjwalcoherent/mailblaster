@@ -26,18 +26,44 @@ module.exports = async function handler(req, res) {
   const closing = render(b.closing || '', r, fallback);
   const footer = render(b.footerHtml || '', r, fallback);
 
-  const html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#1f2430">'
-    + (greeting ? '<p>' + greeting + '</p>' : '')
-    + body
-    + (closing ? '<p style="white-space:pre-line">' + closing + '</p>' : '')
-    + (footer ? '<hr style="border:none;border-top:1px solid #e3e6ee;margin:18px 0"/>' + footer : '')
-    + '</div>';
-
   // attachments arrive as [{ filename, content: <base64> }]
   const attachments = (b.attachments || []).map(a => ({
     filename: a.filename,
     content: Buffer.from(a.content, 'base64'),
   }));
+
+  /* Footer image (signature / banner).
+     Sent as an inline CID attachment, not a data: URI — Gmail and Outlook
+     both strip data-URI images, so base64 inline would render as a broken
+     box for most recipients. */
+  let imgTag = '';
+  const fi = b.footerImage;
+  if (fi && fi.content) {
+    const cid = 'footerimg@mailblaster';
+    const width = Math.max(40, Math.min(900, parseInt(b.footerImageWidth, 10) || 220));
+    imgTag = '<img src="cid:' + cid + '" width="' + width + '" alt="" '
+      + 'style="display:block;max-width:100%;width:' + width + 'px;height:auto;border:0;margin:10px 0"/>';
+    if (b.footerImageLink) {
+      imgTag = '<a href="' + String(b.footerImageLink).replace(/"/g, '&quot;') + '" target="_blank">' + imgTag + '</a>';
+    }
+    attachments.push({
+      filename: fi.filename || 'signature.png',
+      content: Buffer.from(fi.content, 'base64'),
+      cid,
+      contentDisposition: 'inline',
+    });
+  }
+
+  const footerBlock = (b.footerImagePosition === 'above')
+    ? imgTag + footer
+    : footer + imgTag;
+
+  const html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#1f2430">'
+    + (greeting ? '<p>' + greeting + '</p>' : '')
+    + body
+    + (closing ? '<p style="white-space:pre-line">' + closing + '</p>' : '')
+    + (footerBlock ? '<hr style="border:none;border-top:1px solid #e3e6ee;margin:18px 0"/>' + footerBlock : '')
+    + '</div>';
 
   const entry = {
     time: new Date().toISOString(),
@@ -45,7 +71,8 @@ module.exports = async function handler(req, res) {
     to: r.email,
     name: r.first || fallback,
     subject,
-    attachments: attachments.map(a => a.filename),
+    // only real attachments — the inline footer image isn't one
+    attachments: (b.attachments || []).map(a => a.filename),
     status: 'failed',
     error: null,
   };

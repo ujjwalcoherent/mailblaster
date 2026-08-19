@@ -140,6 +140,11 @@ function renderRecipients() {
 
 /* ================= SECTION 3 — compose ================= */
 
+/* Footer image, held as base64 so it survives a page reload with the rest of
+   the draft. Declared up here because the draft-restore IIFE below reads it.
+   It is sent to the API as an inline CID attachment, not a data: URI. */
+let footerImage = null;   // { filename, content(base64), mime }
+
 const editor = $('editor');
 let savedRange = null;
 editor.addEventListener('mouseup', saveSel);
@@ -198,21 +203,65 @@ const bodyHtml = () => $('htmlSource').classList.contains('hidden') ? editor.inn
 
 /* draft autosave */
 const DRAFT_KEY = 'mailblaster.draft';
-const DRAFT_FIELDS = ['subject', 'greeting', 'closing', 'footerHtml', 'fallbackName', 'delayMs', 'rawEmails'];
+const DRAFT_FIELDS = ['subject', 'greeting', 'closing', 'footerHtml', 'fallbackName', 'delayMs', 'rawEmails',
+  'footerImgW', 'footerImgPos', 'footerImgLink'];
 (function restoreDraft() {
   try {
     const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}');
     DRAFT_FIELDS.forEach(k => { if (d[k] != null) $(k).value = d[k]; });
     if (d.body) editor.innerHTML = d.body;
+    if (d.footerImage) { footerImage = d.footerImage; renderFooterImg(); }
   } catch (e) {}
 })();
 function saveDraft() {
-  const d = { body: bodyHtml() };
+  const d = { body: bodyHtml(), footerImage };
   DRAFT_FIELDS.forEach(k => d[k] = $(k).value);
-  localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+  } catch (e) {
+    // localStorage is ~5 MB; a large signature can overflow it. Keep the text.
+    delete d.footerImage;
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+  }
 }
 DRAFT_FIELDS.forEach(k => $(k).addEventListener('input', saveDraft));
 editor.addEventListener('input', saveDraft);
+
+/* ---- footer image (signature / banner) ---- */
+
+function renderFooterImg() {
+  const el = $('footerImgPrev');
+  if (!footerImage) { el.innerHTML = ''; return; }
+  const w = $('footerImgW').value || 220;
+  el.innerHTML = '<img src="data:' + footerImage.mime + ';base64,' + footerImage.content
+    + '" style="width:' + w + 'px;max-width:100%"/>'
+    + '<div class="lbl">' + esc(footerImage.filename) + ' · '
+    + Math.round(footerImage.content.length * 0.75 / 1024) + ' KB</div>';
+}
+
+$('footerImg').onchange = async () => {
+  const f = $('footerImg').files[0];
+  if (!f) return;
+  if (f.size > 2 * 1024 * 1024 &&
+      !confirm('That image is ' + (f.size / 1048576).toFixed(1) + ' MB. Big signatures slow every send '
+             + 'and can trip spam filters. Use it anyway?')) {
+    $('footerImg').value = '';
+    return;
+  }
+  const b64 = await readFileB64(f);
+  footerImage = { filename: f.name, content: b64.content, mime: f.type || 'image/png' };
+  renderFooterImg();
+  saveDraft();
+};
+
+$('btnClearImg').onclick = () => {
+  footerImage = null;
+  $('footerImg').value = '';
+  renderFooterImg();
+  saveDraft();
+};
+
+$('footerImgW').addEventListener('input', renderFooterImg);
 
 $('files').onchange = () => {
   $('fileList').innerHTML = Array.from($('files').files)
@@ -233,12 +282,20 @@ $('btnPreview').onclick = () => {
   if (!recipients.length) return say($('sendMsg'), 'Parse some recipients first (Section 2).', false);
   const r = recipients[0], p = $('preview');
   p.classList.remove('hidden');
+  const img = footerImage
+    ? '<img src="data:' + footerImage.mime + ';base64,' + footerImage.content
+      + '" style="display:block;width:' + ($('footerImgW').value || 220) + 'px;max-width:100%;margin:10px 0"/>'
+    : '';
+  const footerBlock = $('footerImgPos').value === 'above'
+    ? img + fill($('footerHtml').value, r)
+    : fill($('footerHtml').value, r) + img;
+
   p.innerHTML =
     '<div class="to"><b>To:</b> ' + esc(r.email) + ' &nbsp; <b>Subject:</b> ' + esc(fill($('subject').value, r)) + '</div>'
     + '<p>' + esc(fill($('greeting').value, r)) + '</p>'
     + fill(bodyHtml(), r)
     + ($('closing').value ? '<p style="white-space:pre-line">' + esc(fill($('closing').value, r)) + '</p>' : '')
-    + ($('footerHtml').value ? '<hr/>' + fill($('footerHtml').value, r) : '');
+    + (footerBlock ? '<hr/>' + footerBlock : '');
 };
 
 function readFileB64(file) {
@@ -256,7 +313,8 @@ $('btnSend').onclick = async () => {
   if (!recipients.length) return say($('sendMsg'), 'No recipients — parse them in Section 2.', false);
 
   const files = Array.from($('files').files);
-  const totalBytes = files.reduce((a, f) => a + f.size, 0);
+  let totalBytes = files.reduce((a, f) => a + f.size, 0);
+  if (footerImage) totalBytes += footerImage.content.length * 0.75;
   if (totalBytes > 3.5 * 1024 * 1024) {
     if (!confirm('Attachments total ' + (totalBytes / 1048576).toFixed(1) + ' MB. Hosted serverless functions '
       + 'usually cap a request body around 4.5 MB, so this may fail online (it is fine locally). Continue?')) return;
@@ -273,6 +331,10 @@ $('btnSend').onclick = async () => {
     footerHtml: $('footerHtml').value,
     fallbackName: $('fallbackName').value || 'there',
     attachments,
+    footerImage: footerImage ? { filename: footerImage.filename, content: footerImage.content } : null,
+    footerImageWidth: $('footerImgW').value,
+    footerImagePosition: $('footerImgPos').value,
+    footerImageLink: $('footerImgLink').value.trim(),
   };
 
   const delay = Math.max(0, parseInt($('delayMs').value || '800', 10));

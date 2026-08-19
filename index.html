@@ -42,8 +42,8 @@
     </label>
     <label>SMTP port
       <select id="smtpPort">
-        <option value="465">465 — SSL (default)</option>
-        <option value="587">587 — STARTTLS (use if 465 is blocked)</option>
+        <option value="587">587 — STARTTLS (default, most reliable)</option>
+        <option value="465">465 — SSL (often blocked on corporate networks)</option>
       </select>
     </label>
   </div>
@@ -124,6 +124,25 @@ info@somecompany.com"></textarea>
 
   <h3>Footer <small>(HTML — signature, disclaimer, links)</small></h3>
   <textarea id="footerHtml" rows="4" placeholder="&lt;p style='font-size:12px;color:#777'&gt;Coherent Market Insights · Pune · &lt;a href='https://example.com'&gt;Unsubscribe&lt;/a&gt;&lt;/p&gt;"></textarea>
+
+  <h3>Footer image <small>(PNG / JPG signature or banner — embedded inline)</small></h3>
+  <div class="row">
+    <input id="footerImg" type="file" accept="image/png,image/jpeg,image/gif"/>
+    <label class="inline">Width
+      <input id="footerImgW" type="number" value="220" min="40" max="900" step="10" style="width:90px"/> px
+    </label>
+    <label class="inline">Position
+      <select id="footerImgPos" style="width:auto">
+        <option value="below">Below footer text</option>
+        <option value="above">Above footer text</option>
+      </select>
+    </label>
+    <label class="inline">Link to (optional)
+      <input id="footerImgLink" type="url" placeholder="https://…" style="width:200px"/>
+    </label>
+    <button id="btnClearImg">Remove</button>
+  </div>
+  <div id="footerImgPrev" class="imgprev"></div>
 
   <h3>Attachments <small>(PDF or any file, up to 10 × 20 MB)</small></h3>
   <input id="files" type="file" multiple/>

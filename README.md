@@ -8,7 +8,7 @@ A four-section Gmail bulk-mailer. Static frontend + three tiny serverless functi
 |---|---------|--------------|
 | 1 | **Gmail** | Gmail address + 16-character **App Password**, display name, reply-to, SMTP port (465 SSL or 587 STARTTLS). "Verify connection" does a real SMTP handshake before you send anything. Credentials stay in your browser's localStorage — they are never stored server-side. |
 | 2 | **Recipients** | Paste email IDs in any format (commas, spaces, newlines, pasted columns). Duplicates are dropped and the **salutation is parsed out of the email ID itself** — `aditya.jha@acme.com` → *Aditya*, `priya_sharma@x.in` → *Priya*, `rahulVerma99@x.com` → *Rahul*. Generic inboxes (`info@`, `hr@`, `sales@`…) are flagged in amber and fall back to a name you choose. Every parsed name is editable inline. |
-| 3 | **Compose** | Rich-text canvas — select text and hit **B**, *I*, underline, **Highlight** (any colour), text colour, lists, links. Toggle `</> HTML` to hand-edit the source. Plus a separate **ending greeting**, an **HTML footer** (signature / disclaimer / unsubscribe), and **attachments** including PDFs. Merge tags: `{{name}}`, `{{full_name}}`, `{{email}}` — usable in the subject too. Preview renders the first recipient's actual email. |
+| 3 | **Compose** | Rich-text canvas — select text and hit **B**, *I*, underline, **Highlight** (any colour), text colour, lists, links. Toggle `</> HTML` to hand-edit the source. Plus a separate **ending greeting**, an **HTML footer** (signature / disclaimer / unsubscribe), a **footer image** (PNG/JPG signature or banner, with width, position and optional click-through link), and **attachments** including PDFs. Merge tags: `{{name}}`, `{{full_name}}`, `{{email}}` — usable in the subject too. Preview renders the first recipient's actual email. |
 | 4 | **Analytics** | Every attempt is logged: total / delivered / failed / success rate, a per-day stacked bar chart, a searchable log with failure reasons on hover, and CSV export. |
 
 ## Run locally
@@ -47,6 +47,12 @@ dev-server.js                       local clone of Vercel's routing
 
 The browser loops over the recipient list and calls `/api/send` once per person. That keeps each invocation far inside the serverless time limit, needs no queue or job state on the server, and gives live per-recipient progress for free. The delay between mails (default 800 ms) is a client-side pause.
 
+## The footer image
+
+The PNG is attached with a `Content-ID` and referenced as `<img src="cid:…">`, producing a `multipart/related` message. This matters: Gmail and Outlook both strip `data:` URI images, so a base64-inlined signature renders as a broken box for most recipients — the CID route displays reliably.
+
+Keep it small. A 500 KB signature adds ~680 KB to *every* message once base64-encoded, which slows each send and makes spam filters less friendly. Around 30–60 KB at the width you actually display is a good target.
+
 ## Where the log lives
 
 Every send is written to `localStorage` in the browser. When the app runs somewhere with a writable disk — i.e. locally — the same rows are also archived to SQLite at `data/mail.db`, and that copy takes priority in Section 4 so history survives a browser clear. On Vercel the function filesystem is read-only, `/api/log` reports `available: false`, and the browser copy is used. Section 4 tells you which source it's showing.
@@ -55,7 +61,7 @@ To keep a durable shared history on Vercel, point `lib/store.js` at a hosted dat
 
 ## Notes and limits
 
-- **If "Verify connection" fails with `EACCES` / `ECONNREFUSED` / `ETIMEDOUT`,** the connection never reached Google — that is a local network block, not a credentials problem. Switch the SMTP port to **587** in Section 1; many corporate networks, VPNs and antivirus suites block 465 outbound while leaving 587 open.
+- **Port 587 is the default** because port 465 is blocked on many networks — including this one, where 465 returns `EACCES` while 587 reaches Google normally. If you ever see `EACCES` / `ECONNREFUSED` / `ETIMEDOUT`, the connection never left the machine; that is a network block, not a credentials problem, and switching ports is the fix.
 - **App Password required.** Enable 2-Step Verification, then create one at *myaccount.google.com → Security → App passwords*. Your regular Gmail password will not authenticate.
 - **Gmail sending limits** are roughly 500 recipients/day for a personal account and 2,000 for Workspace. Exceeding them gets the account rate-limited.
 - **Attachments over ~4.5 MB total** will fail on Vercel — hosted functions cap the request body. The app warns you before sending. Locally there is no such cap.
