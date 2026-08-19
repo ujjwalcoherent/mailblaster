@@ -47,6 +47,10 @@ dev-server.js                       local clone of Vercel's routing
 
 The browser loops over the recipient list and calls `/api/send` once per person. That keeps each invocation far inside the serverless time limit, needs no queue or job state on the server, and gives live per-recipient progress for free. The delay between mails (default 800 ms) is a client-side pause.
 
+**The trade-off: the tab is the engine.** Reloading or closing the page mid-campaign stops it — everyone already sent stays sent, everyone after the cut-off is never called. The app defends against this three ways: a browser warning if you try to leave while sending, a **Stop** button for deliberate halts, and **Skip already-sent** in Section 2, which drops every address already delivered so a resumed run can't double-send. Backgrounding the tab doesn't stop it, but browsers throttle timers in hidden tabs, so it runs slower.
+
+A campaign that must survive a closed laptop needs a real server-side queue — a different design, and a much heavier one.
+
 ## The footer image
 
 The PNG is attached with a `Content-ID` and referenced as `<img src="cid:…">`, producing a `multipart/related` message. This matters: Gmail and Outlook both strip `data:` URI images, so a base64-inlined signature renders as a broken box for most recipients — the CID route displays reliably.

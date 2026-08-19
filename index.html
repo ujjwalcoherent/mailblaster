@@ -71,8 +71,11 @@ info@somecompany.com"></textarea>
     <label class="inline">Fallback name
       <input id="fallbackName" type="text" value="there" style="width:120px"/>
     </label>
+    <button id="btnSkipSent">Skip already-sent</button>
     <span id="parseMsg" class="msg"></span>
   </div>
+  <p class="hint">Resuming after an interrupted campaign? <b>Skip already-sent</b> drops every address
+     that has already been delivered, so nobody gets the same mail twice.</p>
 
   <div class="tablewrap">
     <table id="recTable">
@@ -154,8 +157,12 @@ info@somecompany.com"></textarea>
     </label>
     <button id="btnPreview">Preview first email</button>
     <button id="btnSend" class="primary">Send campaign</button>
+    <button id="btnStop" class="danger hidden">Stop</button>
     <span id="sendMsg" class="msg"></span>
   </div>
+
+  <p class="hint warn">⚠ Sending runs in this tab. Keep it open until the campaign finishes —
+     reloading or closing the page stops it partway.</p>
 
   <div id="progressWrap" class="hidden">
     <div class="bar"><div id="bar" class="fill"></div></div>

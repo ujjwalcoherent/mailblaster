@@ -298,6 +298,52 @@ $('btnPreview').onclick = () => {
     + (footerBlock ? '<hr/>' + footerBlock : '');
 };
 
+/* The send loop lives in this tab: closing or reloading mid-campaign kills it.
+   Warn before that happens, and let the user resume by skipping addresses that
+   already went out. */
+let sending = false;
+let stopRequested = false;
+
+window.addEventListener('beforeunload', e => {
+  if (!sending) return;
+  e.preventDefault();
+  e.returnValue = 'A campaign is still sending. Leaving this page stops it.';
+  return e.returnValue;
+});
+
+/* Every address that has ever been delivered, from whichever log is live. */
+async function sentAddresses() {
+  const out = new Set();
+  try {
+    const r = await fetch('/api/log').then(x => x.json());
+    if (r && r.ok && r.available) {
+      r.rows.forEach(e => { if (e.status === 'sent') out.add(String(e.to).toLowerCase()); });
+      return out;
+    }
+  } catch (e) {}
+  localLogAll().forEach(e => { if (e.status === 'sent') out.add(String(e.to).toLowerCase()); });
+  return out;
+}
+
+$('btnStop').onclick = () => {
+  stopRequested = true;
+  say($('sendMsg'), 'Stopping after the current email…', false);
+};
+
+$('btnSkipSent').onclick = async () => {
+  if (!recipients.length) return say($('parseMsg'), 'Parse the list first.', false);
+  const done = await sentAddresses();
+  const before = recipients.length;
+  recipients = recipients.filter(r => !done.has(r.email));
+  renderRecipients();
+  const removed = before - recipients.length;
+  say($('parseMsg'),
+    removed
+      ? 'Removed ' + removed + ' address(es) already delivered · ' + recipients.length + ' left to send'
+      : 'None of these have been delivered yet — nothing removed.',
+    true);
+};
+
 function readFileB64(file) {
   return new Promise((resolve, reject) => {
     const fr = new FileReader();
@@ -341,11 +387,16 @@ $('btnSend').onclick = async () => {
   const total = recipients.length;
   let sent = 0, failed = 0;
 
+  sending = true;
   $('btnSend').disabled = true;
+  $('btnStop').classList.remove('hidden');
+  stopRequested = false;
   $('progressWrap').classList.remove('hidden');
-  say($('sendMsg'), 'Sending…', true);
+  say($('sendMsg'), 'Sending… keep this tab open — closing or reloading it stops the campaign.', true);
 
+  let stopped = false;
   for (let i = 0; i < total; i++) {
+    if (stopRequested) { stopped = true; break; }
     const r = recipients[i];
     let entry;
     try {
@@ -374,7 +425,12 @@ $('btnSend').onclick = async () => {
     if (delay && i < total - 1) await new Promise(s => setTimeout(s, delay));
   }
 
-  say($('sendMsg'), '✓ Finished — ' + sent + ' delivered, ' + failed + ' failed.', failed === 0);
+  sending = false;
+  $('btnStop').classList.add('hidden');
+  say($('sendMsg'),
+    (stopped ? '■ Stopped — ' : '✓ Finished — ') + sent + ' delivered, ' + failed + ' failed.'
+      + (stopped || failed ? ' Use "Skip already-sent" in Section 2 before resuming.' : ''),
+    !stopped && failed === 0);
   $('btnSend').disabled = false;
   loadAnalytics();
 };
