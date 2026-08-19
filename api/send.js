@@ -98,7 +98,7 @@ module.exports = async function handler(req, res) {
   }
 
   let persisted = false;
-  try { persisted = store.insert(entry); } catch (e) {}
+  try { persisted = await store.insert(entry); } catch (e) {}
 
   send(res, 200, { ok: entry.status === 'sent', entry, persisted });
 };

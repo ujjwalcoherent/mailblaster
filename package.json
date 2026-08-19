@@ -8,6 +8,7 @@
     "start": "node dev-server.js"
   },
   "dependencies": {
+    "@vercel/postgres": "^0.10.0",
     "nodemailer": "^6.9.14"
   },
   "engines": {

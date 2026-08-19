@@ -103,14 +103,17 @@ $('btnParse').onclick = () => {
   recipients = [];
   for (const e of found) {
     const email = e.toLowerCase();
-    if (seen.has(email)) continue;
+    if (seen.has(email)) continue;      // de-duplicate within the pasted list
     seen.add(email);
     recipients.push(Object.assign({ email }, parseName(email)));
   }
   renderRecipients();
+  const dupes = found.length - recipients.length;
   const generic = recipients.filter(x => x.generic).length;
   say($('parseMsg'),
-    recipients.length + ' unique email(s) · ' + (recipients.length - generic) + ' name(s) parsed'
+    recipients.length + ' unique email(s)'
+    + (dupes ? ' · ' + dupes + ' duplicate(s) removed' : '')
+    + ' · ' + (recipients.length - generic) + ' name(s) parsed'
     + (generic ? ' · ' + generic + ' will use the fallback name' : ''),
     recipients.length > 0);
 };
@@ -358,6 +361,33 @@ $('btnSend').onclick = async () => {
   if (!c.gUser || !c.gPass) return say($('sendMsg'), 'Add your Gmail + app password in Section 1.', false);
   if (!recipients.length) return say($('sendMsg'), 'No recipients — parse them in Section 2.', false);
 
+  // Final de-duplication guard, in case rows were edited after parsing.
+  const uniq = new Map();
+  recipients.forEach(r => { if (!uniq.has(r.email)) uniq.set(r.email, r); });
+  if (uniq.size !== recipients.length) {
+    const dropped = recipients.length - uniq.size;
+    recipients = [...uniq.values()];
+    renderRecipients();
+    say($('sendMsg'), 'Removed ' + dropped + ' duplicate address(es) before sending.', true);
+  }
+
+  // Warn about anyone who has already received mail in a previous run.
+  const delivered = await sentAddresses();
+  const repeats = recipients.filter(r => delivered.has(r.email));
+  if (repeats.length) {
+    const preview = repeats.slice(0, 5).map(r => r.email).join('\n');
+    const answer = confirm(
+      repeats.length + ' of these have already been delivered to previously:\n\n' + preview
+      + (repeats.length > 5 ? '\n…and ' + (repeats.length - 5) + ' more' : '')
+      + '\n\nOK = skip them and send to the other ' + (recipients.length - repeats.length)
+      + '\nCancel = send to everyone anyway (they get it twice)');
+    if (answer) {
+      recipients = recipients.filter(r => !delivered.has(r.email));
+      renderRecipients();
+      if (!recipients.length) return say($('sendMsg'), 'Everyone on this list has already been sent to.', false);
+    }
+  }
+
   const files = Array.from($('files').files);
   let totalBytes = files.reduce((a, f) => a + f.size, 0);
   if (footerImage) totalBytes += footerImage.content.length * 0.75;
@@ -418,6 +448,7 @@ $('btnSend').onclick = async () => {
     }
     if (entry.status === 'sent') sent++; else failed++;
     localLog(entry);
+    loadAnalytics();   // Section 4 updates live, not just at the end
 
     $('bar').style.width = ((i + 1) / total * 100) + '%';
     $('progressText').textContent = (i + 1) + ' / ' + total + ' · ' + sent + ' delivered · ' + failed + ' failed'
@@ -453,15 +484,24 @@ function localLog(entry) {
 }
 
 async function loadAnalytics() {
-  let rows = null, source = 'this browser (localStorage)';
+  let rows = null;
+  let source = '<b>This browser only</b> — history is kept in localStorage, so other devices '
+    + 'and other people see nothing. Connect a Postgres database to share it.';
   try {
     const r = await fetch('/api/log').then(x => x.json());
-    if (r && r.ok && r.available) { rows = r.rows; source = 'SQLite (data/mail.db)'; }
+    if (r && r.ok && r.available) {
+      rows = r.rows;
+      source = r.driver === 'postgres'
+        ? '<b>Shared database</b> — every device and visitor sees this same history.'
+        : '<b>SQLite</b> — <span class="mono">data/mail.db</span> on this machine.';
+    } else if (r && r.reason) {
+      source += '<br/><span class="mono">' + esc(r.reason) + '</span>';
+    }
   } catch (e) {}
   if (!rows) rows = localLogAll().slice().reverse();
 
   logCache = rows;
-  $('logSource').textContent = 'Source: ' + source;
+  $('logSource').innerHTML = source;
 
   const total = rows.length;
   const sent = rows.filter(e => e.status === 'sent').length;

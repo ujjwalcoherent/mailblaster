@@ -9,7 +9,7 @@ A four-section Gmail bulk-mailer. Static frontend + three tiny serverless functi
 | 1 | **Gmail** | Gmail address + 16-character **App Password**, display name, reply-to, SMTP port (465 SSL or 587 STARTTLS). "Verify connection" does a real SMTP handshake before you send anything. Credentials stay in your browser's localStorage — they are never stored server-side. |
 | 2 | **Recipients** | Paste email IDs in any format (commas, spaces, newlines, pasted columns). Duplicates are dropped and the **salutation is parsed out of the email ID itself** — `aditya.jha@acme.com` → *Aditya*, `priya_sharma@x.in` → *Priya*, `rahulVerma99@x.com` → *Rahul*. Generic inboxes (`info@`, `hr@`, `sales@`…) are flagged in amber and fall back to a name you choose. Every parsed name is editable inline. |
 | 3 | **Compose** | Rich-text canvas — select text and hit **B**, *I*, underline, **Highlight** (any colour), text colour, lists, links. Toggle `</> HTML` to hand-edit the source. Plus a separate **ending greeting**, an **HTML footer** (signature / disclaimer / unsubscribe), a **footer image** (PNG/JPG signature or banner, with width, position and optional click-through link), and **attachments** including PDFs. Merge tags: `{{name}}`, `{{full_name}}`, `{{email}}` — usable in the subject too. Preview renders the first recipient's actual email. |
-| 4 | **Analytics** | Every attempt is logged: total / delivered / failed / success rate, a per-day stacked bar chart, a searchable log with failure reasons on hover, and CSV export. |
+| 4 | **Analytics** | Every attempt is logged **live as it happens**: total / delivered / failed / success rate, a per-day stacked bar chart, a searchable log with failure reasons on hover, and CSV export. The panel states which store it is reading so you always know whether the history is shared or browser-only. |
 
 ## Run locally
 
@@ -59,9 +59,29 @@ Keep it small. A 500 KB signature adds ~680 KB to *every* message once base64-en
 
 ## Where the log lives
 
-Every send is written to `localStorage` in the browser. When the app runs somewhere with a writable disk — i.e. locally — the same rows are also archived to SQLite at `data/mail.db`, and that copy takes priority in Section 4 so history survives a browser clear. On Vercel the function filesystem is read-only, `/api/log` reports `available: false`, and the browser copy is used. Section 4 tells you which source it's showing.
+`lib/store.js` picks one of three drivers at runtime:
 
-To keep a durable shared history on Vercel, point `lib/store.js` at a hosted database (Vercel Postgres, Turso, Neon) — it's the only file that touches storage.
+| Driver | When | Shared? |
+|---|---|---|
+| **postgres** | `POSTGRES_URL` is set | Yes — every device and visitor sees the same history |
+| **sqlite** | writable disk (i.e. running locally) → `data/mail.db` | No — that one machine |
+| **none** | read-only disk, no database | No — falls back to the browser's own `localStorage` |
+
+Every send is *also* written to `localStorage`, so the browser always has a copy.
+
+**On Vercel you need Postgres, or Section 4 shows nothing to anyone but you.** Vercel's function filesystem is read-only, so SQLite can't initialise there — `/api/log` returns `available:false` with the reason, and each visitor sees only what their own browser recorded.
+
+To turn it on: Vercel dashboard → **Storage** → **Create Database** → Postgres (Neon) → connect it to the project. That injects `POSTGRES_URL` automatically; redeploy and the table is created on first request. No code change needed.
+
+## Not sending twice
+
+De-duplication happens at three points:
+
+1. **On parse** — repeated addresses in the pasted list are collapsed, case-insensitively, and the count of removed duplicates is reported.
+2. **On send** — a final pass catches duplicates introduced by editing rows after parsing.
+3. **Against history** — anyone already delivered to in a previous run is detected before sending, listed, and you choose whether to skip them or deliberately send again.
+
+**Skip already-sent** in Section 2 does step 3 on demand, which is how you resume an interrupted campaign: re-paste the whole list, parse, skip, send.
 
 ## Notes and limits
 
