@@ -1,95 +1,81 @@
 # MailBlaster
 
-A four-section Gmail bulk-mailer. Static frontend + three tiny serverless functions — no framework, no build step, one npm dependency (`nodemailer`). Runs locally with `npm start` and deploys to Vercel from GitHub with zero configuration.
+A Gmail bulk-mailer with campaign history, reply detection and threaded
+follow-ups. Static frontend plus small serverless functions — no framework, no
+build step. Runs locally with `npm start` and deploys to Vercel from GitHub
+with no configuration.
 
-## The four sections
+The thing that makes it more than a mail-merge script: **it knows who has
+already replied, and refuses to email them again.** That guarantee is enforced
+by the database, not by the browser, so it holds across devices, browser tabs
+and retried requests.
+
+## The five sections
 
 | # | Section | What it does |
 |---|---------|--------------|
-| 1 | **Gmail** | Gmail address + 16-character **App Password**, display name, reply-to, SMTP port (465 SSL or 587 STARTTLS). "Verify connection" does a real SMTP handshake before you send anything. Credentials stay in your browser's localStorage — they are never stored server-side. |
-| 2 | **Recipients** | Paste email IDs in any format (commas, spaces, newlines, pasted columns). Duplicates are dropped and the **salutation is parsed out of the email ID itself** — `aditya.jha@acme.com` → *Aditya*, `priya_sharma@x.in` → *Priya*, `rahulVerma99@x.com` → *Rahul*. Generic inboxes (`info@`, `hr@`, `sales@`, `research@`…) are flagged in amber and fall back to a name you choose. Addresses with no separator to confirm where a first name ends — `yashagrobiotech@`, `drdjha@`, `sm@`, `zoom2animus@` — are flagged **check this name** in orange, because a greeting is the first thing the recipient reads and "Hi Yashagrobiotech," lands badly. Flagged does not mean wrong: `harvinder@` and `sreesanth@` are real first names, so the app asks rather than rewrites. **Use fallback for flagged** switches them all to the neutral greeting in one click. Every parsed name is editable inline. |
-| 3 | **Compose** | Rich-text canvas — select text and hit **B**, *I*, underline, **Highlight** (any colour), text colour, lists, links. Toggle `</> HTML` to hand-edit the source. Plus a separate **ending greeting**, an **HTML footer** (signature / disclaimer / unsubscribe), a **footer image** (PNG/JPG signature or banner, with width, position and optional click-through link), and **attachments** including PDFs. Merge tags: `{{name}}`, `{{full_name}}`, `{{email}}` — usable in the subject too. Preview renders the first recipient's actual email. |
-| 4 | **Analytics** | Every attempt is logged **live as it happens**: total / delivered / failed / success rate, a per-day stacked bar chart, a searchable log with failure reasons on hover, and CSV export. The panel states which store it is reading so you always know whether the history is shared or browser-only. |
+| 1 | **Gmail** | Address, 16-character App Password, display name, reply-to, SMTP port (465 SSL or 587 STARTTLS). *Verify connection* does a real SMTP handshake before you send anything. Credentials stay in your browser — they are never stored server-side. |
+| 2 | **Recipients** | Paste addresses in any format. Duplicates are dropped and the salutation is parsed out of the address itself: `aditya.jha@acme.com` → *Aditya*. Role inboxes (`info@`, `hr@`, `sales@`) are flagged amber; addresses with no separator to confirm where a first name ends (`yashagrobiotech@`, `drdjha@`, `sm@`) are flagged **check this name**, because a greeting is the first thing a recipient reads. Flagged does not mean wrong — `harvinder@` is a real first name — so the app asks rather than rewrites. |
+| 3 | **Compose** | A mail window, not a form: From / To / Subject at the top, then greeting, body, sign-off flowing as one sheet, with signature and attachments collapsed below and the send bar at the foot. Rich text, merge tags (`{{name}}`, `{{full_name}}`, `{{email}}`), inline signature image, attachments. |
+| 4 | **Campaigns** | Every run for the signed-in Gmail account. Drill in: campaign → the people in it → **one person's whole conversation**, oldest first. A stopped run gets a **Resume** button. |
+| 5 | **Replies** | Scans the inbox over IMAP and sorts what it finds into replied / out-of-office / bounced / unsubscribed / no reply. Below it, the follow-up composer — the same mail window as Section 3, sending a **threaded reply** to people who never answered. |
 
 ## Run locally
 
-Double-click **`start.bat`**, or:
-
 ```bash
 npm install
-npm start          # http://localhost:3000   (PORT=3111 npm start to change it)
+npm start                    # http://localhost:3000
+PORT=3100 npm start          # or another port
+npm test                     # 74 tests, no network or secrets needed
 ```
 
-Requires **Node 22.5+** — the SQLite archive uses the built-in `node:sqlite`, so there is nothing native to compile.
+With no `DATABASE_URL` set, history is kept in SQLite at `data/mail.db` —
+built into Node 22.5+, so nothing to install.
 
-## Deploy (GitHub → Vercel)
+## Deploy
 
-```bash
-git init && git add -A && git commit -m "MailBlaster"
-git remote add origin https://github.com/<you>/mailblaster.git
-git push -u origin main
-```
-
-Then on Vercel: **Add New → Project → import the repo → Deploy**. No framework preset, no build command, no environment variables. `vercel.json` only bumps the function timeout to 30s.
-
-Vercel picks up `api/*.js` as functions and serves the root as static — the same routing `dev-server.js` reproduces locally, so what you test is what ships.
-
-## How it's wired
+Push to GitHub; Vercel builds automatically. One environment variable is the
+whole configuration:
 
 ```
-index.html · style.css · app.js     static frontend, all the UI logic
-api/verify.js                       SMTP handshake check
-api/send.js                         sends ONE email per request
-api/log.js                          reads/clears the SQLite archive
-lib/util.js · lib/store.js          name parsing + merge tags · SQLite
-dev-server.js                       local clone of Vercel's routing
+DATABASE_URL=postgresql://user:pass@host.neon.tech/neondb?sslmode=require
 ```
 
-The browser loops over the recipient list and calls `/api/send` once per person. That keeps each invocation far inside the serverless time limit, needs no queue or job state on the server, and gives live per-recipient progress for free. The delay between mails (default 800 ms) is a client-side pause.
+**SQLite cannot work on Vercel** — the filesystem is read-only, which the app
+reports honestly (`driver: none`) rather than failing quietly. Without a
+database the browser falls back to its own localStorage copy, which is
+per-browser and therefore cannot de-duplicate across devices.
 
-**The trade-off: the tab is the engine.** Reloading or closing the page mid-campaign stops it — everyone already sent stays sent, everyone after the cut-off is never called. The app defends against this three ways: a browser warning if you try to leave while sending, a **Stop** button for deliberate halts, and **Skip already-sent** in Section 2, which drops every address already delivered so a resumed run can't double-send. Backgrounding the tab doesn't stop it, but browsers throttle timers in hidden tabs, so it runs slower.
+Vercel discontinued its own Postgres product and now points to the
+[Neon integration](https://vercel.com/marketplace/neon); its free tier needs no
+card, and the schema migrates itself on the first request after a deploy.
 
-A campaign that must survive a closed laptop needs a real server-side queue — a different design, and a much heavier one.
+## What it guarantees
 
-## The footer image
+| Guarantee | How |
+|---|---|
+| Nobody is emailed twice in one campaign | `UNIQUE(campaign_id, recipient_id)` in the database |
+| Nobody who replied is emailed again | `do_not_contact` on the person, checked server-side at send time |
+| An interrupted run can resume safely | The remainder is rebuilt from the database, not the tab |
+| Re-scanning the inbox is harmless | `UNIQUE(mailbox, imap_uid)` |
+| A wrong password never locks your account | Auth failures are `retry: never` |
+| An out-of-office does not lose a contact | Recorded as *retry after this date*, not as suppression |
 
-The PNG is attached with a `Content-ID` and referenced as `<img src="cid:…">`, producing a `multipart/related` message. This matters: Gmail and Outlook both strip `data:` URI images, so a base64-inlined signature renders as a broken box for most recipients — the CID route displays reliably.
+## Documentation
 
-Keep it small. A 500 KB signature adds ~680 KB to *every* message once base64-encoded, which slows each send and makes spam filters less friendly. Around 30–60 KB at the width you actually display is a good target.
+| Document | For |
+|---|---|
+| [API.md](API.md) | Every endpoint, request and response shape |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | How it fits together, and why it is built this way |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Working on the code — conventions, invariants, pitfalls |
 
-## Where the log lives
+## Requirements
 
-`lib/store.js` picks one of three drivers at runtime:
+- Node 22.5 or newer (`node:sqlite` is built in from 22.5)
+- A Gmail **App Password** — 2-Step Verification must be on:
+  `myaccount.google.com → Security → 2-Step Verification → App passwords`
+- For reply detection, IMAP enabled:
+  `Gmail → Settings → Forwarding and POP/IMAP → Enable IMAP`
 
-| Driver | When | Shared? |
-|---|---|---|
-| **postgres** | `POSTGRES_URL` is set | Yes — every device and visitor sees the same history |
-| **sqlite** | writable disk (i.e. running locally) → `data/mail.db` | No — that one machine |
-| **none** | read-only disk, no database | No — falls back to the browser's own `localStorage` |
-
-Every send is *also* written to `localStorage`, so the browser always has a copy.
-
-**On Vercel you need Postgres, or Section 4 shows nothing to anyone but you.** Vercel's function filesystem is read-only, so SQLite can't initialise there — `/api/log` returns `available:false` with the reason, and each visitor sees only what their own browser recorded.
-
-To turn it on: Vercel dashboard → **Storage** → **Create Database** → Postgres (Neon) → connect it to the project. That injects `POSTGRES_URL` automatically; redeploy and the table is created on first request. No code change needed.
-
-## Not sending twice
-
-De-duplication happens at three points:
-
-1. **On parse** — repeated addresses in the pasted list are collapsed, case-insensitively, and the count of removed duplicates is reported.
-2. **On send** — a final pass catches duplicates introduced by editing rows after parsing.
-3. **Against history** — anyone already delivered to in a previous run is detected before sending. The warning names each one *with the subject they received and the date*, so the choice to re-send is informed rather than blind. You can skip them or deliberately send again.
-
-To see exactly what someone got, Section 4 → **View** on their row opens the delivered message, rendered as they saw it — merge tags resolved, bold and highlighting intact, attachments listed. The full body of every send is stored, so this works retrospectively.
-
-**Skip already-sent** in Section 2 does step 3 on demand, which is how you resume an interrupted campaign: re-paste the whole list, parse, skip, send.
-
-## Notes and limits
-
-- **Port 587 is the default** because port 465 is blocked on many networks — including this one, where 465 returns `EACCES` while 587 reaches Google normally. If you ever see `EACCES` / `ECONNREFUSED` / `ETIMEDOUT`, the connection never left the machine; that is a network block, not a credentials problem, and switching ports is the fix.
-- **App Password required.** Enable 2-Step Verification, then create one at *myaccount.google.com → Security → App passwords*. Your regular Gmail password will not authenticate.
-- **Gmail sending limits** are roughly 500 recipients/day for a personal account and 2,000 for Workspace. Exceeding them gets the account rate-limited.
-- **Attachments over ~4.5 MB total** will fail on Vercel — hosted functions cap the request body. The app warns you before sending. Locally there is no such cap.
-- Credentials are posted to your own function per send and used only for that SMTP connection; nothing is persisted server-side.
-- Keep the deployment private, or put Vercel access protection on it — anyone who can open the page can send mail through whatever credentials they type in.
+Gmail's own limits bind long before anything here does: roughly 500
+recipients/day on a free account, 2,000 on Workspace.

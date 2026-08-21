@@ -1,0 +1,50 @@
+name: CI
+
+# Runs on every push and pull request. Vercel deploys from the same pushes, so
+# a red run here is the signal that a deploy should not be trusted.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # node:sqlite is built in from 22.5, which the local driver needs.
+          node-version: '22.x'
+          cache: npm
+
+      - run: npm ci
+
+      # The suite defaults to SQLite, so it needs no database and no secrets.
+      - name: Tests
+        run: npm test
+
+      # Catches a syntax error in a file the suite never imports — the frontend
+      # and the dev server are not covered by npm test.
+      - name: Parse every source file
+        run: |
+          for f in lib/*.js api/*.js app.js dev-server.js test.js; do
+            node --check "$f" || exit 1
+          done
+
+      # A committed connection string would be live the moment it is pushed.
+      - name: No committed secrets
+        run: |
+          if git ls-files | grep -E '^\.env' ; then
+            echo "An .env file is tracked — remove it and rotate the credential."
+            exit 1
+          fi
+          if git grep -nE 'postgres(ql)?://[^ "'"'"']*:[^ "'"'"']*@' -- ':!*.md' ; then
+            echo "A connection string with a password is committed."
+            exit 1
+          fi
+          echo "clean"
+
+      - name: Audit
+        run: npm audit --audit-level=high

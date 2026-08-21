@@ -14,11 +14,126 @@
     <button class="tab active" data-tab="s1">1 · Gmail</button>
     <button class="tab" data-tab="s2">2 · Recipients</button>
     <button class="tab" data-tab="s3">3 · Compose</button>
-    <button class="tab" data-tab="s4">4 · Analytics</button>
+    <button class="tab" data-tab="s4">4 · Campaigns</button>
+    <button class="tab" data-tab="s5">5 · Replies</button>
   </nav>
 </header>
 
 <main>
+
+<!-- ============================================================
+     MAIL WINDOW TEMPLATE
+     Cloned by app.js into Section 3 (compose) and Section 5
+     (follow-up). Defined once so the two windows cannot drift
+     apart: same toolbar, same signature and attachment blocks,
+     same send bar. Per-instance ids are stamped on from the
+     data-prefix of the mount point.
+     ============================================================ -->
+<template id="mailWindowTpl">
+  <div class="mailwindow">
+    <div class="mailhead">
+      <div class="mailrow">
+        <span class="mlabel">From</span>
+        <span class="mfrom" data-id="From">— set your Gmail in Section 1 —</span>
+      </div>
+      <div class="mailrow" data-only="followup">
+        <label class="mlabel" for="fuCampaign">Thread</label>
+        <select id="fuCampaign"><option value="">— choose a campaign to follow up on —</option></select>
+      </div>
+      <div class="mailrow">
+        <span class="mlabel">To</span>
+        <span class="mto" data-id="To">No recipients parsed yet</span>
+      </div>
+      <div class="mailrow">
+        <label class="mlabel" data-for="Subject">Subject</label>
+        <input data-id="Subject" type="text" placeholder="Quick note for {{name}}"/>
+        <span class="msubject-locked hidden" data-id="SubjectLocked"></span>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <button data-cmd="bold" title="Bold"><b>B</b></button>
+      <button data-cmd="italic" title="Italic"><i>I</i></button>
+      <button data-cmd="underline" title="Underline"><u>U</u></button>
+      <button data-cmd="hilite" class="hl">Highlight</button>
+      <button data-cmd="fore">Text colour</button>
+      <input type="color" data-id="ForeColor" value="#d32f2f" title="Text colour"/>
+      <input type="color" data-id="HlColor" value="#fff59d" title="Highlight colour"/>
+      <span class="sep"></span>
+      <button data-cmd="insertUnorderedList">&bull; List</button>
+      <button data-cmd="insertOrderedList">1. List</button>
+      <button data-cmd="createLink">&#128279; Link</button>
+      <button data-cmd="removeFormat">Clear</button>
+      <span class="sep"></span>
+      <span class="chiplabel">Insert:</span>
+      <button data-chip="{{name}}" class="chip">{{name}}</button>
+      <button data-chip="{{full_name}}" class="chip">{{full_name}}</button>
+      <button data-chip="{{email}}" class="chip">{{email}}</button>
+      <span class="sep"></span>
+      <button data-id="BtnHtmlView">&lt;/&gt; HTML</button>
+    </div>
+
+    <div class="mailsheet">
+      <input data-id="Greeting" class="mgreeting" type="text" value="Hi {{name}}," aria-label="Greeting line"/>
+      <div data-id="Editor" class="editor" contenteditable="true"><p>Write your message here.</p></div>
+      <textarea data-id="HtmlSource" class="editor hidden" rows="10"></textarea>
+      <textarea data-id="Closing" class="mclosing" rows="3" placeholder="Warm regards,&#10;Aditya Jha" aria-label="Sign-off"></textarea>
+
+      <details class="quoted hidden" data-id="Quoted" data-only="followup">
+        <summary>&#8942; Show quoted text (the original email)</summary>
+        <div class="quotedbody" data-id="QuotedBody"><p class="hint">Choose a campaign to see the message being replied to.</p></div>
+      </details>
+
+      <hr class="mrule"/>
+
+      <details class="msection" data-id="FooterBox">
+        <summary>Signature &amp; footer <small data-id="FooterSummary">none</small></summary>
+        <div class="msectionbody">
+          <label class="mfield">Footer HTML <small>signature, disclaimer, links</small>
+            <textarea data-id="FooterHtml" rows="3" placeholder="&lt;p style='font-size:12px;color:#777'&gt;Coherent Market Insights &middot; Pune&lt;/p&gt;"></textarea>
+          </label>
+          <label class="mfield">Signature image <small>PNG / JPG, embedded inline so Gmail and Outlook both show it</small>
+            <input data-id="FooterImg" type="file" accept="image/png,image/jpeg,image/gif"/>
+          </label>
+          <div class="row">
+            <label class="inline">Width <input data-id="FooterImgW" type="number" value="220" min="40" max="900" step="10" style="width:80px"/> px</label>
+            <label class="inline">Position
+              <select data-id="FooterImgPos" style="width:auto">
+                <option value="below">Below footer text</option>
+                <option value="above">Above footer text</option>
+              </select>
+            </label>
+            <label class="inline">Link to <input data-id="FooterImgLink" type="url" placeholder="https://…" style="width:180px"/></label>
+            <button data-id="BtnClearImg">Remove</button>
+          </div>
+          <div data-id="FooterImgPrev" class="imgprev"></div>
+        </div>
+      </details>
+
+      <details class="msection" data-id="AttachBox">
+        <summary>Attachments <small data-id="AttachSummary">none</small></summary>
+        <div class="msectionbody">
+          <input data-id="Files" type="file" multiple/>
+          <div data-id="FileList" class="filelist"></div>
+        </div>
+      </details>
+    </div>
+
+    <div class="mailfoot">
+      <button data-id="BtnSend" class="primary big">Send</button>
+      <button data-id="BtnStop" class="danger hidden">Stop</button>
+      <button data-id="BtnPreview">Preview</button>
+      <label class="inline delay">Delay <input data-id="DelayMs" type="number" value="800" min="0" step="100" style="width:76px"/> ms</label>
+      <span data-id="Msg" class="msg" role="status" aria-live="polite"></span>
+    </div>
+
+    <div data-id="ProgressWrap" class="hidden">
+      <div class="bar"><div data-id="Bar" class="fill"></div></div>
+      <div data-id="ProgressText" class="hint"></div>
+    </div>
+  </div>
+</template>
+
 
 <!-- ============ SECTION 1 : GMAIL APP PASSWORD ============ -->
 <section id="s1" class="panel active">
@@ -49,6 +164,23 @@
   </div>
 
   <label class="inline"><input id="remember" type="checkbox" checked/> Remember on this browser (stored locally)</label>
+
+  <details class="msection" id="apiKeyBox">
+    <summary>API key <small id="apiKeyState">not required here</small></summary>
+    <div class="msectionbody">
+      <p class="hint">A hosted deployment sets <span class="mono">MAILBLASTER_API_KEY</span> so its
+         campaign history cannot be read or deleted by anyone who knows the URL. Paste that value
+         here. It is stored in this browser only, and sent only to this site.</p>
+      <label class="mfield">Key
+        <input id="apiKeyInput" type="password" autocomplete="off" placeholder="paste the deployment key"/>
+      </label>
+      <div class="row">
+        <button id="btnSaveKey" class="primary">Save key</button>
+        <button id="btnClearKey">Forget key</button>
+        <span id="apiKeyMsg" class="msg" role="status" aria-live="polite"></span>
+      </div>
+    </div>
+  </details>
 
   <div class="row">
     <button id="btnVerify" class="primary">Verify connection</button>
@@ -88,95 +220,39 @@ info@somecompany.com"></textarea>
 
 <!-- ============ SECTION 3 : COMPOSE ============ -->
 <section id="s3" class="panel">
-  <h2>Section 3 — Compose, Footer &amp; Attachments</h2>
+  <h2>Section 3 — Compose</h2>
+  <!-- The mail window is cloned in here from #mailWindowTpl with the prefix
+       "compose", producing ids like composeSubject, composeEditor, composeFiles. -->
+  <div class="mailmount" data-prefix="compose" data-mode="campaign"></div>
 
-  <div class="grid2">
-    <label>Subject
-      <input id="subject" type="text" placeholder="Quick note for {{name}}"/>
-    </label>
-    <label>Greeting line
-      <input id="greeting" type="text" value="Hi {{name}},"/>
-    </label>
-  </div>
-
-  <h3>Email body <small>(rich text — bold / highlight / links)</small></h3>
-  <div class="toolbar">
-    <button data-cmd="bold"><b>B</b></button>
-    <button data-cmd="italic"><i>I</i></button>
-    <button data-cmd="underline"><u>U</u></button>
-    <button data-cmd="hilite" class="hl">Highlight</button>
-    <button data-cmd="fore">Text colour</button>
-    <input type="color" id="foreColor" value="#d32f2f" title="Text colour"/>
-    <input type="color" id="hlColor" value="#fff59d" title="Highlight colour"/>
-    <span class="sep"></span>
-    <button data-cmd="insertUnorderedList">• List</button>
-    <button data-cmd="insertOrderedList">1. List</button>
-    <button data-cmd="createLink">🔗 Link</button>
-    <button data-cmd="removeFormat">Clear</button>
-    <span class="sep"></span>
-    <button data-chip="{{name}}" class="chip">{{name}}</button>
-    <button data-chip="{{full_name}}" class="chip">{{full_name}}</button>
-    <button data-chip="{{email}}" class="chip">{{email}}</button>
-    <span class="sep"></span>
-    <button id="btnHtmlView">&lt;/&gt; HTML</button>
-  </div>
-  <div id="editor" class="editor" contenteditable="true"><p>Write your message here. Select text and hit <b>B</b> or <b>Highlight</b>.</p></div>
-  <textarea id="htmlSource" class="editor hidden" rows="10"></textarea>
-
-  <h3>Ending greeting</h3>
-  <textarea id="closing" rows="3" placeholder="Warm regards,&#10;Aditya Jha&#10;Coherent Market Insights"></textarea>
-
-  <h3>Footer <small>(HTML — signature, disclaimer, links)</small></h3>
-  <textarea id="footerHtml" rows="4" placeholder="&lt;p style='font-size:12px;color:#777'&gt;Coherent Market Insights · Pune · &lt;a href='https://example.com'&gt;Unsubscribe&lt;/a&gt;&lt;/p&gt;"></textarea>
-
-  <h3>Footer image <small>(PNG / JPG signature or banner — embedded inline)</small></h3>
-  <div class="row">
-    <input id="footerImg" type="file" accept="image/png,image/jpeg,image/gif"/>
-    <label class="inline">Width
-      <input id="footerImgW" type="number" value="220" min="40" max="900" step="10" style="width:90px"/> px
-    </label>
-    <label class="inline">Position
-      <select id="footerImgPos" style="width:auto">
-        <option value="below">Below footer text</option>
-        <option value="above">Above footer text</option>
-      </select>
-    </label>
-    <label class="inline">Link to (optional)
-      <input id="footerImgLink" type="url" placeholder="https://…" style="width:200px"/>
-    </label>
-    <button id="btnClearImg">Remove</button>
-  </div>
-  <div id="footerImgPrev" class="imgprev"></div>
-
-  <h3>Attachments <small>(PDF or any file, up to 10 × 20 MB)</small></h3>
-  <input id="files" type="file" multiple/>
-  <div id="fileList" class="filelist"></div>
-
-  <div class="row">
-    <label class="inline">Delay between mails (ms)
-      <input id="delayMs" type="number" value="800" min="0" step="100" style="width:100px"/>
-    </label>
-    <button id="btnPreview">Preview first email</button>
-    <button id="btnSend" class="primary">Send campaign</button>
-    <button id="btnStop" class="danger hidden">Stop</button>
-    <span id="sendMsg" class="msg"></span>
-  </div>
-
-  <p class="hint warn">⚠ Sending runs in this tab. Keep it open until the campaign finishes —
+  <p class="hint warn">&#9888; Sending runs in this tab. Keep it open until the campaign finishes &mdash;
      reloading or closing the page stops it partway.</p>
-
-  <div id="progressWrap" class="hidden">
-    <div class="bar"><div id="bar" class="fill"></div></div>
-    <div id="progressText" class="hint"></div>
-  </div>
-
   <div id="preview" class="preview hidden"></div>
 </section>
 
 <!-- ============ SECTION 4 : ANALYTICS ============ -->
 <section id="s4" class="panel">
-  <h2>Section 4 — Analytics</h2>
+  <h2>Section 4 — Campaigns &amp; history</h2>
   <p class="hint" id="logSource">Source: —</p>
+
+  <h3>Campaign runs</h3>
+  <p class="hint">Every run of a campaign, newest first, for the Gmail account in Section 1.
+     Follow-up sends a threaded reply to people who never responded.</p>
+  <div class="tablewrap">
+    <table id="campTable">
+      <thead><tr>
+        <th>Started</th><th>Campaign</th><th>Subject</th><th>Progress</th>
+        <th>Replied</th><th>OOO</th><th>Bounced</th><th>Status</th><th>Follow-up</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- Drill-down: campaign -> people -> one person's thread. Hidden until a
+       campaign is opened, so the list stays the default view. -->
+  <div id="campDetail" class="hidden"></div>
+
+  <h3>Sent log</h3>
   <div class="row">
     <button id="btnRefresh" class="primary">Refresh</button>
     <button id="btnExport">Export CSV</button>
@@ -201,6 +277,83 @@ info@somecompany.com"></textarea>
       <tbody></tbody>
     </table>
   </div>
+</section>
+
+<!-- ============ SECTION 5 : REPLIES ============ -->
+<section id="s5" class="panel">
+  <h2>Section 5 — Replies, out-of-office &amp; bounces</h2>
+  <p class="hint">Scans the inbox of the Gmail account in Section 1 over IMAP, using the same
+     App Password. Nothing is stored on the server &mdash; the password stays in this browser.</p>
+
+  <!-- Scan bar. A mailbox scan takes several seconds, so the button reports
+       what it is doing while it does it rather than sitting inert. -->
+  <div class="scanbar">
+    <div class="scanrow">
+      <label class="inline">Scan the last
+        <select id="replyDays">
+          <option value="7">7 days</option>
+          <option value="30" selected>30 days</option>
+          <option value="90">90 days</option>
+        </select>
+      </label>
+      <button id="btnScanReplies" class="primary">
+        <span class="spinner hidden" id="scanSpin" aria-hidden="true"></span>
+        <span id="scanLabel">Scan for replies</span>
+      </button>
+      <span id="replyMsg" class="msg" role="status" aria-live="polite"></span>
+      <span class="scanmeta hint" id="replyMeta">Never scanned</span>
+    </div>
+    <div id="scanProgressWrap" class="hidden">
+      <div class="bar"><div id="scanBar" class="fill"></div></div>
+      <div id="scanProgressText" class="hint"></div>
+    </div>
+  </div>
+
+  <div class="stats stats5">
+    <button class="stat ok"   data-kind="reply"       aria-pressed="true"><span id="stReplied">0</span><label>Replied</label></button>
+    <button class="stat warn" data-kind="ooo"         aria-pressed="false"><span id="stOoo">0</span><label>Out of office</label></button>
+    <button class="stat bad"  data-kind="bounce"      aria-pressed="false"><span id="stBounced">0</span><label>Bounced</label></button>
+    <button class="stat"      data-kind="unsubscribe" aria-pressed="false"><span id="stUnsub">0</span><label>Unsubscribed</label></button>
+    <button class="stat"      data-kind="none"        aria-pressed="false"><span id="stNoReply">0</span><label>No reply</label></button>
+  </div>
+  <p class="hint">The tiles above are filters &mdash; choose one to list those messages.</p>
+
+  <!-- Inbox-style list. Each row is a real email, so clicking one opens it in
+       the same mail window the app uses everywhere else. -->
+  <div class="inbox" id="replyList">
+    <p class="empty">Nothing scanned yet. Run a scan to see replies, out-of-office notices and bounces.</p>
+  </div>
+
+  <h3>Send a follow-up</h3>
+  <p class="hint">The follow-up goes out as a <b>reply in the original thread</b>, so it appears
+     nested under the first email in the recipient&rsquo;s inbox rather than as a new message.</p>
+
+  <fieldset class="who">
+    <legend>Who to include</legend>
+    <label class="chk"><input type="checkbox" id="fuNoReply" checked/>
+      <span><b>Never replied</b> <small id="cntNoReply">(0)</small><br/>
+      <small class="hint">Delivered, but no response of any kind.</small></span></label>
+    <label class="chk"><input type="checkbox" id="fuOoo"/>
+      <span><b>Out of office, now back</b> <small id="cntOoo">(0)</small><br/>
+      <small class="hint">Their auto-reply gave a return date that has passed &mdash; they likely never saw it.</small></span></label>
+    <label class="chk"><input type="checkbox" id="fuSoft"/>
+      <span><b>Soft bounces</b> <small id="cntSoft">(0)</small><br/>
+      <small class="hint">Mailbox was temporarily full. Excludes hard bounces and anyone over 3 strikes.</small></span></label>
+    <label class="chk"><input type="checkbox" id="fuFailed"/>
+      <span><b>Failed sends</b> <small id="cntFailed">(0)</small><br/>
+      <small class="hint">Timed out or errored &mdash; never actually delivered.</small></span></label>
+    <label class="chk"><input type="checkbox" id="fuCap" checked/>
+      <span><b>Skip anyone already chased 3 times</b><br/>
+      <small class="hint">Stops a contact being followed up indefinitely.</small></span></label>
+    <p class="hint always-excluded">Always excluded: anyone who replied, unsubscribed,
+       hard-bounced, or is still marked out-of-office.</p>
+  </fieldset>
+
+  <!-- Same window as Section 3, cloned from the one template with the prefix
+       "fu" and switched to follow-up mode (thread picker + quoted original). -->
+  <div class="mailmount" data-prefix="fu" data-mode="followup"></div>
+
+  <div id="fuPreview" class="preview hidden"></div>
 </section>
 
 </main>

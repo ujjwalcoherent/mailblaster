@@ -3,13 +3,138 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&am
 
 let recipients = [];
 
+/* ---------- API key ----------
+   When the deployment sets MAILBLASTER_API_KEY every endpoint requires it, so
+   the page needs it too. It is attached in one place rather than at each of
+   the call sites: a request that quietly forgets the header would surface as a
+   confusing 401 rather than an obvious mistake.
+
+   This is a deployment secret, not a per-user credential — anyone holding it
+   can read everything this deployment stores. It lives in localStorage next to
+   the Gmail settings, and is sent only to this origin. */
+const API_KEY_STORE = 'mailblaster.apikey';
+
+function apiKey() {
+  try { return localStorage.getItem(API_KEY_STORE) || ''; } catch (e) { return ''; }
+}
+function setApiKey(v) {
+  try {
+    if (v) localStorage.setItem(API_KEY_STORE, v);
+    else localStorage.removeItem(API_KEY_STORE);
+  } catch (e) {}
+}
+
+/* Wrap fetch once, so every current and future call carries the key. Only
+   same-origin /api/ requests are touched — the key must never be attached to
+   a third-party URL. */
+const rawFetch = window.fetch.bind(window);
+window.fetch = function (input, init) {
+  const url = typeof input === 'string' ? input : (input && input.url) || '';
+  const key = apiKey();
+  if (key && url.indexOf('/api/') === 0) {
+    const opts = Object.assign({}, init);
+    opts.headers = Object.assign({}, (init && init.headers) || {}, { 'X-API-Key': key });
+    return rawFetch(input, opts);
+  }
+  return rawFetch(input, init);
+};
+
+/* A 401 means the key is missing or wrong; say so once, plainly, rather than
+   letting every panel fail with its own vague message. */
+let keyPromptShown = false;
+async function apiGet(url) {
+  const r = await fetch(url).then(x => x.json());
+  if (r && r.code === 'UNAUTHORIZED') promptForKey();
+  return r;
+}
+function promptForKey() {
+  if (keyPromptShown) return;
+  keyPromptShown = true;
+  const v = prompt('This deployment requires an API key.\n\n'
+    + 'Paste the value of MAILBLASTER_API_KEY from your Vercel project settings.');
+  if (v) { setApiKey(v.trim()); location.reload(); }
+}
+
+/* Wire the API key field, and tell the user whether this deployment needs one
+   so an empty box is never mistaken for a broken page. */
+if ($('apiKeyInput')) {
+  $('apiKeyInput').value = apiKey();
+  $('btnSaveKey').onclick = function () {
+    setApiKey($('apiKeyInput').value.trim());
+    say($('apiKeyMsg'), 'Saved. Reloading…', true);
+    setTimeout(function () { location.reload(); }, 500);
+  };
+  $('btnClearKey').onclick = function () {
+    setApiKey('');
+    $('apiKeyInput').value = '';
+    say($('apiKeyMsg'), 'Key forgotten on this browser.', true);
+  };
+  /* /api/log answers without a key when none is configured, so it doubles as
+     the probe for whether this deployment is protected. */
+  rawFetch('/api/log').then(function (r) { return r.json(); }).then(function (r) {
+    const state = $('apiKeyState');
+    if (r && r.code === 'UNAUTHORIZED') {
+      state.textContent = apiKey() ? 'saved key rejected' : 'required';
+      if (!apiKey()) $('apiKeyBox').open = true;
+    } else {
+      state.textContent = 'not required here';
+    }
+  }).catch(function () {});
+}
+
+/* ---------- mail window ----------
+   One <template> in index.html, cloned into every place that composes an
+   email. Each mount carries a prefix, and every data-id inside the clone
+   becomes prefix+Id — so the compose window owns composeSubject/composeEditor
+   and the follow-up owns fuSubject/fuEditor, from identical markup.
+
+   Doing it this way rather than copying the block means the two windows
+   cannot drift apart: a change to the toolbar or the signature block lands in
+   both, and there is exactly one definition to maintain. */
+function mountMailWindows() {
+  const tpl = document.getElementById('mailWindowTpl');
+  if (!tpl) return;
+
+  document.querySelectorAll('.mailmount').forEach(mount => {
+    const prefix = mount.dataset.prefix;
+    const mode = mount.dataset.mode || 'campaign';
+    const node = tpl.content.cloneNode(true);
+
+    // rows that belong to only one mode (the thread picker, the quoted original)
+    node.querySelectorAll('[data-only]').forEach(el => {
+      if (el.dataset.only !== mode) el.remove();
+    });
+
+    // data-id -> a real, unique id for this instance
+    node.querySelectorAll('[data-id]').forEach(el => {
+      el.id = prefix + el.dataset.id;
+      el.removeAttribute('data-id');
+    });
+    node.querySelectorAll('[data-for]').forEach(el => {
+      el.setAttribute('for', prefix + el.dataset.for);
+      el.removeAttribute('data-for');
+    });
+    // toolbars act on this instance's editor
+    node.querySelectorAll('.toolbar [data-cmd], .toolbar [data-chip]').forEach(b => {
+      b.dataset.target = prefix + 'Editor';
+    });
+
+    mount.appendChild(node);
+  });
+}
+mountMailWindows();
+
+/* Reach a field of one mail window: mw('compose','Subject'). */
+const mw = (prefix, name) => document.getElementById(prefix + name);
+
 /* ---------- tabs ---------- */
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
   t.classList.add('active');
   $(t.dataset.tab).classList.add('active');
-  if (t.dataset.tab === 's4') loadAnalytics();
+  if (t.dataset.tab === 's4') { loadAnalytics(); loadCampaigns(); }
+  if (t.dataset.tab === 's5') loadCampaigns();
 });
 
 function say(el, text, ok) {
@@ -182,6 +307,7 @@ $('btnParse').onclick = () => {
 };
 
 function renderRecipients() {
+  if (typeof refreshComposeHeader === 'function') setTimeout(refreshComposeHeader, 0);
   const tb = document.querySelector('#recTable tbody');
   tb.innerHTML = recipients.map((r, i) => {
     const low = !r.generic && r.confidence === 'low';
@@ -218,31 +344,48 @@ function renderRecipients() {
    It is sent to the API as an inline CID attachment, not a data: URI. */
 let footerImage = null;   // { filename, content(base64), mime }
 
-const editor = $('editor');
+const editor = $('composeEditor');
+
+/* The rich-text editor is a shared component: Section 3 composes the campaign
+   and Section 5 composes the follow-up, each with its own toolbar. So the
+   saved selection tracks WHICH editor was last focused, and a toolbar button
+   restores into that one — otherwise every button would silently act on the
+   compose editor no matter where the cursor was. */
 let savedRange = null;
-editor.addEventListener('mouseup', saveSel);
-editor.addEventListener('keyup', saveSel);
+let activeEditor = editor;
+
+function editors() {
+  return Array.from(document.querySelectorAll('.editor[contenteditable="true"]'));
+}
 function saveSel() {
   const s = window.getSelection();
-  if (s.rangeCount && editor.contains(s.anchorNode)) savedRange = s.getRangeAt(0);
+  if (!s.rangeCount) return;
+  const host = editors().find(el => el.contains(s.anchorNode));
+  if (host) { activeEditor = host; savedRange = s.getRangeAt(0); }
 }
-function restoreSel() {
-  if (!savedRange) return editor.focus();
+function restoreSel(target) {
+  /* A toolbar can name its editor with data-target; otherwise use whichever
+     was focused last, falling back to the compose editor. */
+  const want = target ? $(target) : null;
+  if (want && want !== activeEditor) { activeEditor = want; savedRange = null; }
+  if (!savedRange) return activeEditor.focus();
   const s = window.getSelection();
   s.removeAllRanges();
   s.addRange(savedRange);
 }
+document.addEventListener('mouseup', saveSel);
+document.addEventListener('keyup', saveSel);
 
 document.querySelectorAll('.toolbar button[data-cmd]').forEach(b => b.onclick = e => {
   e.preventDefault();
-  restoreSel();
+  restoreSel(b.dataset.target);
   const cmd = b.dataset.cmd;
   if (cmd === 'hilite') {
-    if (!document.execCommand('hiliteColor', false, $('hlColor').value)) {
-      document.execCommand('backColor', false, $('hlColor').value);
+    if (!document.execCommand('hiliteColor', false, $('composeHlColor').value)) {
+      document.execCommand('backColor', false, $('composeHlColor').value);
     }
   } else if (cmd === 'fore') {
-    document.execCommand('foreColor', false, $('foreColor').value);
+    document.execCommand('foreColor', false, $('composeForeColor').value);
   } else if (cmd === 'createLink') {
     const url = prompt('Link URL', 'https://');
     if (url) document.execCommand('createLink', false, url);
@@ -254,13 +397,13 @@ document.querySelectorAll('.toolbar button[data-cmd]').forEach(b => b.onclick = 
 
 document.querySelectorAll('.toolbar button[data-chip]').forEach(b => b.onclick = e => {
   e.preventDefault();
-  restoreSel();
+  restoreSel(b.dataset.target);
   document.execCommand('insertText', false, b.dataset.chip);
   saveSel();
 });
 
-$('btnHtmlView').onclick = () => {
-  const ta = $('htmlSource');
+$('composeBtnHtmlView').onclick = () => {
+  const ta = $('composeHtmlSource');
   if (ta.classList.contains('hidden')) {
     ta.value = editor.innerHTML;
     ta.classList.remove('hidden');
@@ -272,12 +415,13 @@ $('btnHtmlView').onclick = () => {
   }
 };
 
-const bodyHtml = () => $('htmlSource').classList.contains('hidden') ? editor.innerHTML : $('htmlSource').value;
+const bodyHtml = () => $('composeHtmlSource').classList.contains('hidden') ? editor.innerHTML : $('composeHtmlSource').value;
 
 /* draft autosave */
 const DRAFT_KEY = 'mailblaster.draft';
-const DRAFT_FIELDS = ['subject', 'greeting', 'closing', 'footerHtml', 'fallbackName', 'delayMs', 'rawEmails',
-  'footerImgW', 'footerImgPos', 'footerImgLink'];
+const DRAFT_FIELDS = ['composeSubject', 'composeGreeting', 'composeClosing', 'composeFooterHtml',
+  'fallbackName', 'composeDelayMs', 'rawEmails',
+  'composeFooterImgW', 'composeFooterImgPos', 'composeFooterImgLink'];
 (function restoreDraft() {
   try {
     const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}');
@@ -297,28 +441,30 @@ function saveDraft() {
     localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
   }
 }
-DRAFT_FIELDS.forEach(k => $(k).addEventListener('input', saveDraft));
-editor.addEventListener('input', saveDraft);
+/* Bind defensively: one absent element must never throw and leave every
+   handler defined after this point unbound. */
+DRAFT_FIELDS.forEach(k => { const el = $(k); if (el) el.addEventListener('input', saveDraft); });
+if (editor) editor.addEventListener('input', saveDraft);
 
 /* ---- footer image (signature / banner) ---- */
 
 function renderFooterImg() {
-  const el = $('footerImgPrev');
+  const el = $('composeFooterImgPrev');
   if (!footerImage) { el.innerHTML = ''; return; }
-  const w = $('footerImgW').value || 220;
+  const w = $('composeFooterImgW').value || 220;
   el.innerHTML = '<img src="data:' + footerImage.mime + ';base64,' + footerImage.content
     + '" style="width:' + w + 'px;max-width:100%"/>'
     + '<div class="lbl">' + esc(footerImage.filename) + ' · '
     + Math.round(footerImage.content.length * 0.75 / 1024) + ' KB</div>';
 }
 
-$('footerImg').onchange = async () => {
-  const f = $('footerImg').files[0];
+$('composeFooterImg').onchange = async () => {
+  const f = $('composeFooterImg').files[0];
   if (!f) return;
   if (f.size > 2 * 1024 * 1024 &&
       !confirm('That image is ' + (f.size / 1048576).toFixed(1) + ' MB. Big signatures slow every send '
              + 'and can trip spam filters. Use it anyway?')) {
-    $('footerImg').value = '';
+    $('composeFooterImg').value = '';
     return;
   }
   const b64 = await readFileB64(f);
@@ -327,17 +473,17 @@ $('footerImg').onchange = async () => {
   saveDraft();
 };
 
-$('btnClearImg').onclick = () => {
+$('composeBtnClearImg').onclick = () => {
   footerImage = null;
-  $('footerImg').value = '';
+  $('composeFooterImg').value = '';
   renderFooterImg();
   saveDraft();
 };
 
-$('footerImgW').addEventListener('input', renderFooterImg);
+$('composeFooterImgW').addEventListener('input', renderFooterImg);
 
-$('files').onchange = () => {
-  $('fileList').innerHTML = Array.from($('files').files)
+$('composeFiles').onchange = () => {
+  $('composeFileList').innerHTML = Array.from($('composeFiles').files)
     .map(f => '<span>📎 ' + esc(f.name) + ' · ' + (f.size / 1024).toFixed(0) + ' KB</span>').join('');
 };
 
@@ -351,23 +497,23 @@ function fill(tpl, r) {
     .replace(/\{\{\s*email\s*\}\}/gi, r.email);
 }
 
-$('btnPreview').onclick = () => {
-  if (!recipients.length) return say($('sendMsg'), 'Parse some recipients first (Section 2).', false);
+$('composeBtnPreview').onclick = () => {
+  if (!recipients.length) return say($('composeMsg'), 'Parse some recipients first (Section 2).', false);
   const r = recipients[0], p = $('preview');
   p.classList.remove('hidden');
   const img = footerImage
     ? '<img src="data:' + footerImage.mime + ';base64,' + footerImage.content
-      + '" style="display:block;width:' + ($('footerImgW').value || 220) + 'px;max-width:100%;margin:10px 0"/>'
+      + '" style="display:block;width:' + ($('composeFooterImgW').value || 220) + 'px;max-width:100%;margin:10px 0"/>'
     : '';
-  const footerBlock = $('footerImgPos').value === 'above'
-    ? img + fill($('footerHtml').value, r)
-    : fill($('footerHtml').value, r) + img;
+  const footerBlock = $('composeFooterImgPos').value === 'above'
+    ? img + fill($('composeFooterHtml').value, r)
+    : fill($('composeFooterHtml').value, r) + img;
 
   p.innerHTML =
-    '<div class="to"><b>To:</b> ' + esc(r.email) + ' &nbsp; <b>Subject:</b> ' + esc(fill($('subject').value, r)) + '</div>'
-    + '<p>' + esc(fill($('greeting').value, r)) + '</p>'
+    '<div class="to"><b>To:</b> ' + esc(r.email) + ' &nbsp; <b>Subject:</b> ' + esc(fill($('composeSubject').value, r)) + '</div>'
+    + '<p>' + esc(fill($('composeGreeting').value, r)) + '</p>'
     + fill(bodyHtml(), r)
-    + ($('closing').value ? '<p style="white-space:pre-line">' + esc(fill($('closing').value, r)) + '</p>' : '')
+    + ($('composeClosing').value ? '<p style="white-space:pre-line">' + esc(fill($('composeClosing').value, r)) + '</p>' : '')
     + (footerBlock ? '<hr/>' + footerBlock : '');
 };
 
@@ -433,9 +579,9 @@ async function sentAddresses() {
   return out;
 }
 
-$('btnStop').onclick = () => {
+$('composeBtnStop').onclick = () => {
   stopRequested = true;
-  say($('sendMsg'), 'Stopping after the current email…', false);
+  say($('composeMsg'), 'Stopping after the current email…', false);
 };
 
 $('btnFallbackFlagged').onclick = () => {
@@ -471,10 +617,10 @@ function readFileB64(file) {
   });
 }
 
-$('btnSend').onclick = async () => {
+$('composeBtnSend').onclick = async () => {
   const c = creds();
-  if (!c.gUser || !c.gPass) return say($('sendMsg'), 'Add your Gmail + app password in Section 1.', false);
-  if (!recipients.length) return say($('sendMsg'), 'No recipients — parse them in Section 2.', false);
+  if (!c.gUser || !c.gPass) return say($('composeMsg'), 'Add your Gmail + app password in Section 1.', false);
+  if (!recipients.length) return say($('composeMsg'), 'No recipients — parse them in Section 2.', false);
 
   // Final de-duplication guard, in case rows were edited after parsing.
   const uniq = new Map();
@@ -483,7 +629,7 @@ $('btnSend').onclick = async () => {
     const dropped = recipients.length - uniq.size;
     recipients = [...uniq.values()];
     renderRecipients();
-    say($('sendMsg'), 'Removed ' + dropped + ' duplicate address(es) before sending.', true);
+    say($('composeMsg'), 'Removed ' + dropped + ' duplicate address(es) before sending.', true);
   }
 
   // Warn about anyone who has already received mail in a previous run.
@@ -506,11 +652,11 @@ $('btnSend').onclick = async () => {
     if (answer) {
       recipients = recipients.filter(r => !delivered.has(r.email));
       renderRecipients();
-      if (!recipients.length) return say($('sendMsg'), 'Everyone on this list has already been sent to.', false);
+      if (!recipients.length) return say($('composeMsg'), 'Everyone on this list has already been sent to.', false);
     }
   }
 
-  const files = Array.from($('files').files);
+  const files = Array.from($('composeFiles').files);
   let totalBytes = files.reduce((a, f) => a + f.size, 0);
   if (footerImage) totalBytes += footerImage.content.length * 0.75;
   if (totalBytes > 3.5 * 1024 * 1024) {
@@ -522,29 +668,29 @@ $('btnSend').onclick = async () => {
   const attachments = await Promise.all(files.map(readFileB64));
   const base = {
     user: c.gUser, pass: c.gPass, port: c.smtpPort, fromName: c.fromName, replyTo: c.replyTo,
-    subject: $('subject').value,
-    greeting: $('greeting').value,
+    subject: $('composeSubject').value,
+    greeting: $('composeGreeting').value,
     bodyHtml: bodyHtml(),
-    closing: $('closing').value,
-    footerHtml: $('footerHtml').value,
+    closing: $('composeClosing').value,
+    footerHtml: $('composeFooterHtml').value,
     fallbackName: $('fallbackName').value || 'there',
     attachments,
     footerImage: footerImage ? { filename: footerImage.filename, content: footerImage.content } : null,
-    footerImageWidth: $('footerImgW').value,
-    footerImagePosition: $('footerImgPos').value,
-    footerImageLink: $('footerImgLink').value.trim(),
+    footerImageWidth: $('composeFooterImgW').value,
+    footerImagePosition: $('composeFooterImgPos').value,
+    footerImageLink: $('composeFooterImgLink').value.trim(),
   };
 
-  const delay = Math.max(0, parseInt($('delayMs').value || '800', 10));
+  const delay = Math.max(0, parseInt($('composeDelayMs').value || '800', 10));
   const total = recipients.length;
   let sent = 0, failed = 0;
 
   sending = true;
-  $('btnSend').disabled = true;
-  $('btnStop').classList.remove('hidden');
+  $('composeBtnSend').disabled = true;
+  $('composeBtnStop').classList.remove('hidden');
   stopRequested = false;
-  $('progressWrap').classList.remove('hidden');
-  say($('sendMsg'), 'Sending… keep this tab open — closing or reloading it stops the campaign.', true);
+  $('composeProgressWrap').classList.remove('hidden');
+  say($('composeMsg'), 'Sending… keep this tab open — closing or reloading it stops the campaign.', true);
 
   let stopped = false;
   for (let i = 0; i < total; i++) {
@@ -572,21 +718,740 @@ $('btnSend').onclick = async () => {
     localLog(entry);
     loadAnalytics();   // Section 4 updates live, not just at the end
 
-    $('bar').style.width = ((i + 1) / total * 100) + '%';
-    $('progressText').textContent = (i + 1) + ' / ' + total + ' · ' + sent + ' delivered · ' + failed + ' failed'
+    $('composeBar').style.width = ((i + 1) / total * 100) + '%';
+    $('composeProgressText').textContent = (i + 1) + ' / ' + total + ' · ' + sent + ' delivered · ' + failed + ' failed'
       + (entry.status === 'failed' ? ' · last error: ' + entry.error : '');
     if (delay && i < total - 1) await new Promise(s => setTimeout(s, delay));
   }
 
   sending = false;
-  $('btnStop').classList.add('hidden');
-  say($('sendMsg'),
+  $('composeBtnStop').classList.add('hidden');
+  say($('composeMsg'),
     (stopped ? '■ Stopped — ' : '✓ Finished — ') + sent + ' delivered, ' + failed + ' failed.'
       + (stopped || failed ? ' Use "Skip already-sent" in Section 2 before resuming.' : ''),
     !stopped && failed === 0);
-  $('btnSend').disabled = false;
+  $('composeBtnSend').disabled = false;
   loadAnalytics();
 };
+
+/* ---------- live mail-window header ----------
+   The From and To lines mirror what Section 1 and Section 2 hold, so the
+   compose window always shows who the message is actually going out as. */
+function refreshComposeHeader() {
+  const from = $('gUser') ? $('gUser').value.trim() : '';
+  const name = $('fromName') ? $('fromName').value.trim() : '';
+  const el = $('composeFrom');
+  if (el) {
+    el.textContent = from ? (name ? name + ' <' + from + '>' : from) : '— set your Gmail in Section 1 —';
+    el.classList.toggle('empty', !from);
+  }
+  const to = $('composeTo');
+  if (to) {
+    const n = recipients.length;
+    const flagged = recipients.filter(r => !r.generic && r.confidence === 'low').length;
+    to.textContent = n
+      ? n + ' recipient' + (n === 1 ? '' : 's') + (flagged ? ' · ' + flagged + ' name(s) flagged for review' : '')
+      : 'No recipients parsed yet';
+    to.classList.toggle('empty', !n);
+  }
+}
+
+/* Collapsed sections say what they hold, so nothing is hidden silently. */
+function refreshComposeSummaries() {
+  const fs = $('composeFooterSummary');
+  if (fs) {
+    const bits = [];
+    if (($('composeFooterHtml').value || '').trim()) bits.push('text');
+    if (footerImage) bits.push('image');
+    fs.textContent = bits.length ? bits.join(' + ') : 'none';
+  }
+  const as = $('composeAttachSummary');
+  if (as) {
+    const n = $('composeFiles').files.length;
+    as.textContent = n ? n + ' file' + (n === 1 ? '' : 's') : 'none';
+  }
+}
+
+['gUser', 'fromName'].forEach(id => {
+  if ($(id)) $(id).addEventListener('input', refreshComposeHeader);
+});
+/* History belongs to a Gmail account, so switching account reloads it. */
+if ($('gUser')) $('gUser').addEventListener('change', () => {
+  campaignCache = [];
+  if (typeof loadCampaigns === 'function') loadCampaigns();
+});
+if ($('composeFooterHtml')) $('composeFooterHtml').addEventListener('input', refreshComposeSummaries);
+if ($('composeFiles')) $('composeFiles').addEventListener('change', refreshComposeSummaries);
+refreshComposeHeader();
+refreshComposeSummaries();
+
+/* Load the real campaign history for whichever Gmail account is in Section 1.
+   Scoped by address so two people sharing a browser do not see each other's
+   runs; the App Password is never sent anywhere for this. */
+async function loadCampaigns() {
+  const owner = ($('gUser') && $('gUser').value.trim()) || '';
+  const tb = document.querySelector('#campTable tbody');
+  if (tb && !campaignCache.length) {
+    tb.innerHTML = '<tr><td colspan="9" class="hint">Loading\u2026</td></tr>';
+  }
+  try {
+    const url = '/api/campaigns' + (owner ? '?owner=' + encodeURIComponent(owner) : '');
+    const r = await fetch(url).then(x => x.json());
+    if (r && r.ok && r.available) {
+      campaignCache = r.campaigns || [];
+    } else {
+      campaignCache = [];
+      if (tb) {
+        tb.innerHTML = '<tr><td colspan="9" class="hint">'
+          + (r && r.reason ? esc(r.reason) : 'No database connected.') + '</td></tr>';
+        return;
+      }
+    }
+  } catch (e) {
+    campaignCache = [];
+    if (tb) tb.innerHTML = '<tr><td colspan="9" class="msg bad">Could not reach the server.</td></tr>';
+    return;
+  }
+  renderCampaigns();
+}
+
+/* ---------- scanning the inbox for replies ----------
+   A mailbox scan takes seconds and a hosted function is killed at 60s, so the
+   server returns a cursor when its budget runs out and this loop continues
+   from there. The button reports progress throughout rather than sitting
+   inert, because a silent multi-second wait reads as a broken control. */
+let scanning = false;
+
+async function scanReplies() {
+  if (scanning) return;
+  const c = creds();
+  if (!c.gUser || !c.gPass) {
+    return say($('replyMsg'), 'Add your Gmail address and App Password in Section 1 first.', false);
+  }
+
+  scanning = true;
+  const btn = $('btnScanReplies');
+  btn.disabled = true;
+  btn.setAttribute('aria-busy', 'true');
+  $('scanSpin').classList.remove('hidden');
+  $('scanLabel').textContent = 'Scanning\u2026';
+  $('scanProgressWrap').classList.remove('hidden');
+  say($('replyMsg'), '', true);
+
+  const days = Number($('replyDays').value) || 30;
+  let cursor = null, examined = 0, total = 0, rounds = 0;
+  const found = [];
+
+  try {
+    /* Keep resuming until the server says it finished. The round cap is a
+       backstop against a cursor that never advances. */
+    do {
+      const r = await fetch('/api/replies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: c.gUser, pass: c.gPass, days, cursor }),
+      }).then(x => x.json());
+
+      if (!r.ok) {
+        say($('replyMsg'), (r.error || 'Scan failed') + (r.hint ? ' \u2014 ' + r.hint : ''), false);
+        break;
+      }
+
+      found.push.apply(found, r.messages || []);
+      examined += r.examined || 0;
+      total = r.total || total;
+      cursor = r.done ? null : r.cursor;
+
+      const pct = total ? Math.min(100, Math.round(examined / total * 100)) : 100;
+      $('scanBar').style.width = pct + '%';
+      $('scanProgressText').textContent = examined + (total ? ' of ' + total : '') + ' messages examined'
+        + (found.length ? ' \u00b7 ' + found.length + ' relevant' : '');
+    } while (cursor && ++rounds < 20);
+
+    replyCache = found;
+    renderReplyStats();
+    renderReplyList();
+
+    if (found.length || examined) {
+      const n = k => found.filter(x => x.kind === k).length;
+      say($('replyMsg'), 'Done \u2014 ' + n('reply') + ' replied, ' + n('ooo') + ' out of office, '
+        + n('bounce') + ' bounced.', true);
+      $('replyMeta').textContent = 'Last scan just now \u00b7 last ' + days + ' days \u00b7 '
+        + examined + ' messages examined';
+    }
+    /* Suppression may have changed, so anything showing an audience is stale. */
+    if (typeof loadCampaigns === 'function') loadCampaigns();
+    if ($('fuCampaign') && $('fuCampaign').value) loadFollowupAudience();
+  } catch (e) {
+    say($('replyMsg'), 'Could not reach the server: ' + e.message, false);
+  } finally {
+    scanning = false;
+    btn.disabled = false;
+    btn.removeAttribute('aria-busy');
+    $('scanSpin').classList.add('hidden');
+    $('scanLabel').textContent = 'Scan for replies';
+    setTimeout(function () { $('scanProgressWrap').classList.add('hidden'); }, 1200);
+  }
+}
+if ($('btnScanReplies')) $('btnScanReplies').onclick = scanReplies;
+
+/* ---------- follow-up ---------- */
+
+let followupAudience = [];
+
+/* Populate the campaign picker from real history. */
+function fillFollowupCampaigns() {
+  const sel = $('fuCampaign');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">\u2014 choose a campaign to follow up on \u2014</option>'
+    + campaignCache.map(function (c) {
+        return '<option value="' + c.id + '">' + esc(c.name) + ' \u00b7 '
+          + new Date(c.startedAt).toLocaleDateString() + ' \u00b7 ' + c.sent + ' sent</option>';
+      }).join('');
+  if (current) sel.value = current;
+}
+
+/* Who would receive it, decided by the server so a page left open for an hour
+   cannot mail someone who has since replied. */
+async function loadFollowupAudience() {
+  const id = $('fuCampaign') && $('fuCampaign').value;
+  const setCount = function (k, n) { const el = $(k); if (el) el.textContent = '(' + n + ')'; };
+  if (!id) {
+    followupAudience = [];
+    ['cntNoReply', 'cntOoo', 'cntSoft', 'cntFailed'].forEach(function (k) { setCount(k, 0); });
+    $('fuCount').textContent = '0';
+    $('fuTo').textContent = 'Choose a campaign first';
+    return;
+  }
+  try {
+    const r = await fetch('/api/followup?campaign=' + encodeURIComponent(id)
+      + ($('fuCap') && $('fuCap').checked ? '&cap=3' : '&cap=999')).then(x => x.json());
+    if (!r.ok) return;
+    followupAudience = r.candidates || [];
+    const c = r.counts || {};
+    setCount('cntNoReply', c.noreply || 0);
+    setCount('cntOoo', c.ooo || 0);
+    setCount('cntSoft', c.soft || 0);
+    setCount('cntFailed', c.failed || 0);
+
+    const parent = campaignCache.find(function (x) { return String(x.id) === String(id); });
+    if (parent && $('fuSubjectLocked')) {
+      $('fuSubjectLocked').innerHTML = 'Re: ' + esc(parent.subject || '(no subject)');
+    }
+    if (parent && $('fuQuoted')) {
+      $('fuQuoted').classList.remove('hidden');
+      $('fuQuotedBody').innerHTML = '<p class="hint">The original, sent '
+        + new Date(parent.startedAt).toLocaleDateString() + ': <b>'
+        + esc(parent.subject || '') + '</b></p>';
+    }
+    updateFollowupCount();
+  } catch (e) {}
+}
+
+function chosenReasons() {
+  return {
+    noreply: !!($('fuNoReply') && $('fuNoReply').checked),
+    ooo: !!($('fuOoo') && $('fuOoo').checked),
+    soft: !!($('fuSoft') && $('fuSoft').checked),
+    failed: !!($('fuFailed') && $('fuFailed').checked),
+  };
+}
+
+function selectedAudience() {
+  const want = chosenReasons();
+  return followupAudience.filter(function (p) { return want[p.why]; });
+}
+
+function updateFollowupCount() {
+  const n = selectedAudience().length;
+  if ($('fuCount')) $('fuCount').textContent = String(n);
+  if ($('fuTo')) {
+    $('fuTo').textContent = n
+      ? n + ' recipient' + (n === 1 ? '' : 's') + ' who have not replied'
+      : 'Nobody matches the chosen audience';
+    $('fuTo').classList.toggle('empty', !n);
+  }
+}
+
+['fuNoReply', 'fuOoo', 'fuSoft', 'fuFailed'].forEach(function (id) {
+  if ($(id)) $(id).addEventListener('change', updateFollowupCount);
+});
+if ($('fuCap')) $('fuCap').addEventListener('change', loadFollowupAudience);
+if ($('fuCampaign')) $('fuCampaign').addEventListener('change', loadFollowupAudience);
+
+/* Send the follow-up as a reply in the original thread. */
+async function sendFollowup() {
+  const c = creds();
+  if (!c.gUser || !c.gPass) return say($('fuMsg'), 'Add your Gmail credentials in Section 1.', false);
+  const campaignId = $('fuCampaign').value;
+  if (!campaignId) return say($('fuMsg'), 'Choose a campaign to follow up on.', false);
+
+  const audience = selectedAudience();
+  if (!audience.length) return say($('fuMsg'), 'Nobody matches the chosen audience.', false);
+  if (!confirm('Send a follow-up to ' + audience.length + ' recipient(s)?\n\n'
+    + 'It goes out as a reply in the original thread.')) return;
+
+  let started;
+  try {
+    started = await fetch('/api/followup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        campaignId, owner: c.gUser, include: chosenReasons(),
+        maxFollowups: ($('fuCap') && $('fuCap').checked) ? 3 : false,
+      }),
+    }).then(x => x.json());
+  } catch (e) {
+    return say($('fuMsg'), 'Could not reach the server: ' + e.message, false);
+  }
+  if (!started.ok || !started.campaignId) {
+    return say($('fuMsg'), started.message || started.error || 'Could not start the follow-up.', false);
+  }
+
+  /* The server rebuilt the audience at this moment, so use ITS list rather
+     than what the page was showing. */
+  const people = started.candidates || audience;
+  await runSendLoop({
+    people: people,
+    campaignId: started.campaignId,
+    followupRound: started.followupRound,
+    prefix: 'fu',
+    creds: c,
+    threaded: true,
+  });
+  loadCampaigns();
+  loadFollowupAudience();
+}
+if ($('fuBtnSend')) $('fuBtnSend').onclick = sendFollowup;
+if ($('fuBtnStop')) $('fuBtnStop').onclick = function () {
+  stopRequested = true;
+  say($('fuMsg'), 'Stopping after the current email\u2026', false);
+};
+
+/* ---------- one send loop, used by campaigns and follow-ups ----------
+   Threading is the only real difference: a follow-up carries In-Reply-To and
+   References so Gmail nests it under the original. */
+async function runSendLoop(opts) {
+  const p = opts.prefix;
+  const msg = $(p + 'Msg');
+  const delay = Math.max(0, parseInt(($(p + 'DelayMs') || {}).value || '800', 10));
+  const total = opts.people.length;
+  let sent = 0, failed = 0, skipped = 0;
+
+  sending = true;
+  stopRequested = false;
+  $(p + 'BtnSend').disabled = true;
+  if ($(p + 'BtnStop')) $(p + 'BtnStop').classList.remove('hidden');
+  $(p + 'ProgressWrap').classList.remove('hidden');
+  say(msg, 'Sending\u2026 keep this tab open.', true);
+
+  const base = {
+    user: opts.creds.gUser, pass: opts.creds.gPass, port: opts.creds.smtpPort,
+    fromName: opts.creds.fromName, replyTo: opts.creds.replyTo,
+    campaignId: opts.campaignId,
+    followupRound: opts.followupRound || 0,
+    greeting: ($(p + 'Greeting') || {}).value || '',
+    bodyHtml: ($(p + 'Editor') || {}).innerHTML || '',
+    closing: ($(p + 'Closing') || {}).value || '',
+    footerHtml: ($(p + 'FooterHtml') || {}).value || '',
+    fallbackName: ($('fallbackName') || {}).value || 'there',
+    attachments: [],
+  };
+
+  let stopped = false;
+  for (let i = 0; i < total; i++) {
+    if (stopRequested) { stopped = true; break; }
+    const person = opts.people[i];
+    const body = Object.assign({
+      recipient: { email: person.email, first: person.first, full: person.full },
+      subject: opts.threaded ? ('Re: ' + (person.subject || '')) : base.subject,
+    }, base);
+
+    /* Thread onto the message being answered: Gmail nests the reply only when
+       both headers carry the original Message-Id. */
+    if (opts.threaded && person.messageId) {
+      body.inReplyTo = person.messageId;
+      body.references = [person.messageId];
+    }
+
+    let res;
+    try {
+      res = await fetch('/api/send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(x => x.json());
+    } catch (e) {
+      res = { ok: false, error: e.message };
+    }
+
+    if (res.duplicate) skipped++;
+    else if (res.ok) sent++;
+    else failed++;
+
+    $(p + 'Bar').style.width = ((i + 1) / total * 100) + '%';
+    $(p + 'ProgressText').textContent = (i + 1) + ' / ' + total + ' \u00b7 ' + sent + ' delivered'
+      + (failed ? ' \u00b7 ' + failed + ' failed' : '')
+      + (skipped ? ' \u00b7 ' + skipped + ' already sent' : '')
+      + (!res.ok && res.error ? ' \u00b7 ' + res.error : '');
+
+    if (delay && i < total - 1) await new Promise(function (r) { setTimeout(r, delay); });
+  }
+
+  sending = false;
+  if ($(p + 'BtnStop')) $(p + 'BtnStop').classList.add('hidden');
+  $(p + 'BtnSend').disabled = false;
+  say(msg, (stopped ? '\u25a0 Stopped \u2014 ' : '\u2713 Finished \u2014 ') + sent + ' delivered'
+    + (failed ? ', ' + failed + ' failed' : '')
+    + (skipped ? ', ' + skipped + ' skipped as already sent' : '') + '.',
+    !stopped && !failed);
+  return { sent: sent, failed: failed, skipped: skipped, stopped: stopped };
+}
+
+/* ---------- resuming an interrupted campaign ----------
+   The send loop dies with the tab, so where a run got to is rebuilt from the
+   database rather than trusted to the browser. */
+async function resumeCampaign(c) {
+  const creds_ = creds();
+  if (!creds_.gUser || !creds_.gPass) {
+    return alert('Add your Gmail credentials in Section 1 before resuming.');
+  }
+  let state;
+  try {
+    state = await fetch('/api/resume?campaign=' + encodeURIComponent(c.id)).then(x => x.json());
+  } catch (e) { return alert('Could not reach the server.'); }
+
+  const retry = (state && state.retry) || [];
+  if (!retry.length) {
+    return alert('Nothing left to send: everyone in this campaign has been delivered to.');
+  }
+  if (!confirm('Resume "' + c.name + '"?\n\n' + state.done + ' already delivered.\n'
+    + retry.length + ' still to send.\n\nAnyone already delivered to is skipped.')) return;
+
+  await runSendLoop({
+    people: retry, campaignId: c.id, prefix: 'compose', creds: creds_,
+  });
+  loadCampaigns();
+}
+
+/* The follow-up window is the same component as compose, so it gets the same
+   controls. They are bound per-window rather than duplicated: one definition,
+   two instances. */
+
+/* Toggle between the rich-text editor and its HTML source. */
+if ($('fuBtnHtmlView')) $('fuBtnHtmlView').onclick = function () {
+  const ed = $('fuEditor'), src = $('fuHtmlSource');
+  if (src.classList.contains('hidden')) {
+    src.value = ed.innerHTML;
+    src.classList.remove('hidden');
+    ed.classList.add('hidden');
+    $('fuBtnHtmlView').textContent = 'Rich text';
+  } else {
+    ed.innerHTML = src.value;
+    src.classList.add('hidden');
+    ed.classList.remove('hidden');
+    $('fuBtnHtmlView').textContent = '</> HTML';
+  }
+};
+
+if ($('fuBtnClearImg')) $('fuBtnClearImg').onclick = function () {
+  if ($('fuFooterImg')) $('fuFooterImg').value = '';
+  if ($('fuFooterImgPrev')) $('fuFooterImgPrev').innerHTML = '';
+};
+
+/* Show the follow-up exactly as the first recipient will receive it, including
+   the quoted original underneath — the whole point of a threaded reply is that
+   it arrives as part of an existing conversation. */
+if ($('fuBtnPreview')) $('fuBtnPreview').onclick = function () {
+  const who = selectedAudience()[0];
+  if (!who) return say($('fuMsg'), 'Choose a campaign and an audience first.', false);
+
+  const fallback = ($('fallbackName') || {}).value || 'there';
+  const fill = function (t) { return renderTags(t, who, fallback); };
+  const box = $('fuPreview');
+  box.classList.remove('hidden');
+  box.innerHTML =
+    '<div class="to"><b>To:</b> ' + esc(who.email)
+    + ' &nbsp; <b>Subject:</b> Re: ' + esc(who.subject || '') + '</div>'
+    + '<p>' + esc(fill(($('fuGreeting') || {}).value || '')) + '</p>'
+    + fill(($('fuEditor') || {}).innerHTML || '')
+    + (($('fuClosing') || {}).value
+        ? '<p style="white-space:pre-line">' + esc(fill($('fuClosing').value)) + '</p>' : '')
+    + '<div class="quotedbody" style="margin-top:14px">'
+    + '<p class="hint">\u22ee quoted: the original message, sent '
+    + (who.at ? new Date(who.at).toLocaleDateString() : 'earlier') + '</p></div>';
+};
+
+/* Merge tags, resolved the same way the server does. */
+function renderTags(tpl, r, fallback) {
+  const first = r.first || fallback;
+  const full = r.full || first;
+  return String(tpl || '')
+    .replace(/\{\{\s*name\s*\}\}/gi, esc(first))
+    .replace(/\{\{\s*first_?name\s*\}\}/gi, esc(first))
+    .replace(/\{\{\s*full_?name\s*\}\}/gi, esc(full))
+    .replace(/\{\{\s*email\s*\}\}/gi, esc(r.email || ''));
+}
+
+/* ================= SECTION 4 — campaigns =================
+   Three levels, because that is how the question is actually asked:
+   which campaigns ran -> who was in this one -> what happened with this person.
+   The trail merges sends and replies into one ordered conversation, so
+   "they answered the second follow-up" is visible rather than inferred. */
+
+let campaignCache = [];
+let currentCampaign = null;
+
+function fmtWhen(isoStr) {
+  if (!isoStr) return '—';
+  const d = new Date(isoStr);
+  return d.toLocaleDateString([], { day: 'numeric', month: 'short' })
+    + ', ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function renderCampaigns() {
+  const tb = document.querySelector('#campTable tbody');
+  if (!tb) return;
+  if (!campaignCache.length) {
+    tb.innerHTML = '<tr><td colspan="9">No campaigns yet for this Gmail account. '
+      + 'Send one from Section 3, or import a past campaign from your Sent folder.</td></tr>';
+    return;
+  }
+  tb.innerHTML = campaignCache.map(function (c, i) {
+    const done = c.sent + c.failed;
+    const pct = c.total ? Math.round(done / c.total * 100) : 100;
+    return '<tr>'
+      + '<td>' + fmtWhen(c.startedAt) + '</td>'
+      + '<td><b>' + esc(c.name) + '</b>'
+        + (c.imported ? ' <span class="badge p" title="Imported from Gmail">imported</span>' : '') + '</td>'
+      + '<td>' + esc(c.subject || '—') + '</td>'
+      + '<td class="progresscell">' + done + ' / ' + (c.total || done)
+      + '<div class="minibar" title="' + c.sent + ' delivered, ' + c.failed + ' failed">'
+      + '<i class="s" style="flex:' + c.sent + '"></i><i class="f" style="flex:' + c.failed + '"></i></div></td>'
+      + '<td>' + (c.replied || 0) + '</td>'
+      + '<td>' + (c.ooo || 0) + '</td>'
+      + '<td>' + (c.bounced || 0) + '</td>'
+      + '<td><span class="badge ' + c.status + '">' + c.status + '</span>'
+      + (c.status === 'stopped' && pct < 100
+          ? '<br/><small class="hint">' + (100 - pct) + '% left</small>' : '') + '</td>'
+      + '<td><button class="open" data-i="' + i + '">Open</button>'
+      + (c.status === 'stopped' && done < c.total
+          ? ' <button class="resume" data-i="' + i + '">Resume</button>' : '')
+      + '</td>'
+      + '</tr>';
+  }).join('');
+  tb.querySelectorAll('.open').forEach(function (b) {
+    b.onclick = function () { openCampaign(campaignCache[+b.dataset.i]); };
+  });
+  tb.querySelectorAll('.resume').forEach(function (b) {
+    b.onclick = function () { resumeCampaign(campaignCache[+b.dataset.i]); };
+  });
+  fillFollowupCampaigns();
+}
+
+/* Level 2: everyone in one campaign, and where each of them got to. */
+async function openCampaign(c) {
+  if (!c) return;
+  currentCampaign = c;
+  const host = $('campDetail');
+  if (!host) return;
+  host.classList.remove('hidden');
+  host.innerHTML = '<p class="hint">Loading…</p>';
+
+  let people = [];
+  try {
+    const r = await fetch('/api/campaigns?id=' + encodeURIComponent(c.id) + '&people=1').then(x => x.json());
+    if (r && r.ok) people = r.people || [];
+  } catch (e) {}
+
+  const done = c.sent + c.failed;
+  host.innerHTML =
+    '<div class="detailhead">'
+    + '<button class="back" id="campBack">&larr; All campaigns</button>'
+    + '<h3>' + esc(c.name) + '</h3>'
+    + '<span class="badge ' + c.status + '">' + c.status + '</span>'
+    + '</div>'
+    + '<div class="stats">'
+    + '<div class="stat"><span>' + (c.total || done) + '</span><label>Recipients</label></div>'
+    + '<div class="stat ok"><span>' + c.sent + '</span><label>Delivered</label></div>'
+    + '<div class="stat bad"><span>' + c.failed + '</span><label>Failed</label></div>'
+    + '<div class="stat"><span>' + (c.replied || 0) + '</span><label>Replied</label></div>'
+    + '</div>'
+    + '<p class="hint">Started ' + fmtWhen(c.startedAt)
+    + (c.finishedAt ? ' &middot; finished ' + fmtWhen(c.finishedAt) : ' &middot; still running')
+    + ' &middot; subject <span class="mono">' + esc(c.subject || '—') + '</span></p>'
+    + '<div class="inbox" id="peopleList">'
+    + (people.length
+        ? people.map(function (p, i) {
+            return '<button class="mailitem" data-i="' + i + '">'
+              + '<span class="dot ' + personDot(p) + '"></span>'
+              + '<span class="who">' + esc(p.name || p.email.split('@')[0]) + '</span>'
+              + '<span class="subj">' + esc(p.email)
+              + (p.followups ? ' &middot; ' + p.followups + ' follow-up' + (p.followups === 1 ? '' : 's') : '')
+              + '</span>'
+              + '<span class="meta"><span class="badge ' + personDot(p) + '">' + esc(personLabel(p)) + '</span>'
+              + '<span class="when">' + (p.firstSentAt ? fmtWhen(p.firstSentAt).split(',')[0] : '') + '</span></span>'
+              + '</button>';
+          }).join('')
+        : '<p class="empty">No recipients recorded for this campaign.</p>')
+    + '</div>';
+
+  $('campBack').onclick = function () { host.classList.add('hidden'); };
+  host.querySelectorAll('#peopleList .mailitem').forEach(function (b) {
+    b.onclick = function () { openThread(people[+b.dataset.i]); };
+  });
+}
+
+const personDot = p => p.status === 'replied' ? 'reply'
+  : p.status === 'bounced' ? 'bounce'
+  : p.status === 'unsubscribed' ? 'unsubscribe'
+  : p.status === 'ooo' ? 'ooo'
+  : p.firstStatus === 'failed' ? 'bounce' : 'none';
+
+function personLabel(p) {
+  if (p.status === 'replied') return 'replied';
+  if (p.status === 'bounced') return 'bounced';
+  if (p.status === 'unsubscribed') return 'opt-out';
+  if (p.status === 'ooo') return 'out of office';
+  if (p.firstStatus === 'failed') return 'failed';
+  return p.contacts > 1 ? p.contacts + ' contacts' : 'no reply';
+}
+
+/* Level 3: the whole conversation with one person, in order. */
+async function openThread(p) {
+  if (!p) return;
+  let trail = [];
+  try {
+    const r = await fetch('/api/thread?recipient=' + encodeURIComponent(p.id)).then(x => x.json());
+    if (r && r.ok) trail = r.trail || [];
+  } catch (e) {}
+
+  $('modalTitle').textContent = p.name ? (p.name + ' — ' + p.email) : p.email;
+  $('modalMeta').innerHTML =
+    '<span class="badge ' + personDot(p) + '">' + esc(personLabel(p)) + '</span>'
+    + ' &nbsp;&middot;&nbsp; ' + (p.contacts || p.sends || 0) + ' contact(s)'
+    + (p.followups ? ' &middot; ' + p.followups + ' follow-up(s)' : '')
+    + (p.repliedAt ? ' &middot; replied ' + fmtWhen(p.repliedAt) : '')
+    + (p.doNotContact ? ' &nbsp;&middot;&nbsp; <b>suppressed from future sends</b>' : '');
+
+  $('modalBody').innerHTML = trail.length
+    ? '<ol class="trail">' + trail.map(function (e) {
+        return '<li class="' + e.type + '">'
+          + '<div class="trailhead"><b>' + esc(e.label) + '</b>'
+          + '<span class="when">' + fmtWhen(e.at) + '</span></div>'
+          + '<div class="trailbody">' + esc(e.subject || '')
+          + (e.snippet ? '<br/><span class="hint">' + esc(e.snippet) + '</span>' : '')
+          + (e.error ? '<br/><span class="msg bad">' + esc(e.error) + '</span>' : '')
+          + '</div></li>';
+      }).join('') + '</ol>'
+    : '<p class="hint">No messages recorded for this person yet.</p>';
+  $('modal').classList.remove('hidden');
+}
+
+/* ================= SECTION 5 — replies =================
+   The stat tiles double as the filter: they are the only summary on screen,
+   so making them the control removes a redundant row of pills and keeps the
+   count and the filter in one place. */
+
+let replyCache = [];          // everything the last scan found
+let replyFilter = 'reply';    // which tile is pressed
+
+const KIND_LABEL = {
+  reply: 'Replied', ooo: 'Out of office', bounce: 'Bounced',
+  unsubscribe: 'Unsubscribed', none: 'No reply', auto: 'Bulk mail',
+};
+
+function renderReplyStats() {
+  const n = k => replyCache.filter(r => r.kind === k).length;
+  const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+  set('stReplied', n('reply'));
+  set('stOoo', n('ooo'));
+  set('stBounced', n('bounce'));
+  set('stUnsub', n('unsubscribe'));
+  set('stNoReply', n('none'));
+}
+
+function renderReplyList() {
+  const host = $('replyList');
+  if (!host) return;
+  const rows = replyCache.filter(r => r.kind === replyFilter);
+
+  if (!rows.length) {
+    host.innerHTML = '<p class="empty">No messages in <b>' + esc(KIND_LABEL[replyFilter] || replyFilter)
+      + '</b>.' + (replyCache.length ? '' : ' Run a scan to look for replies.') + '</p>';
+    return;
+  }
+
+  /* Build once and attach by index: rebuilding a node per click, or searching
+     the cache by address, both go wrong when two people share a name. */
+  host.innerHTML = rows.map((r, i) => {
+    const when = new Date(r.receivedAt);
+    const today = when.toDateString() === new Date().toDateString();
+    const stamp = today
+      ? when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : when.toLocaleDateString([], { day: 'numeric', month: 'short' });
+    return '<button class="mailitem" data-i="' + i + '" aria-label="Open message from ' + esc(r.from) + '">'
+      + '<span class="dot ' + r.kind + '"></span>'
+      + '<span class="who">' + esc(nameFromAddress(r.from)) + '</span>'
+      + '<span class="subj"><b>' + esc(r.subject || '(no subject)') + '</b>'
+      + (r.snippet ? ' — ' + esc(r.snippet.slice(0, 90)) : '') + '</span>'
+      + '<span class="meta">'
+      + '<span class="badge ' + r.kind + '">' + esc(replyTag(r)) + '</span>'
+      + '<span class="when">' + stamp + '</span></span></button>';
+  }).join('');
+
+  host.querySelectorAll('.mailitem').forEach(b => {
+    b.onclick = () => openReply(rows[+b.dataset.i]);
+  });
+}
+
+/* A short, honest label: why this was classified as it was. */
+function replyTag(r) {
+  if (r.kind === 'ooo' && r.oooUntil) {
+    return 'back ' + new Date(r.oooUntil).toLocaleDateString([], { day: 'numeric', month: 'short' });
+  }
+  if (r.kind === 'bounce') return r.hard ? 'hard bounce' : 'soft bounce';
+  if (r.kind === 'unsubscribe') return 'opt-out';
+  if (r.contacts) return r.contacts + ordinal(r.contacts) + ' contact';
+  return KIND_LABEL[r.kind] || r.kind;
+}
+const ordinal = n => (n % 10 === 1 && n !== 11) ? 'st' : (n % 10 === 2 && n !== 12) ? 'nd'
+  : (n % 10 === 3 && n !== 13) ? 'rd' : 'th';
+
+function nameFromAddress(email) {
+  const p = parseName(String(email || ''));
+  return p && p.full ? p.full : String(email || '').split('@')[0];
+}
+
+/* Open one message in the same viewer used for sent mail, with a bar
+   explaining WHY it was classified the way it was — a wrong call should be
+   debuggable, not mysterious. */
+function openReply(r) {
+  if (!r) return;
+  $('modalTitle').textContent = r.subject || '(no subject)';
+  $('modalMeta').innerHTML =
+    '<b>From:</b> ' + esc(r.from)
+    + ' &nbsp;&middot;&nbsp; ' + new Date(r.receivedAt).toLocaleString()
+    + ' &nbsp;&middot;&nbsp; <span class="badge ' + r.kind + '">' + esc(KIND_LABEL[r.kind] || r.kind) + '</span>'
+    + (r.oooUntil ? ' &nbsp;&middot;&nbsp; back ' + new Date(r.oooUntil).toLocaleDateString() : '');
+  $('modalBody').innerHTML =
+    '<div class="whybar">Detected as <b>' + esc(KIND_LABEL[r.kind] || r.kind) + '</b>'
+    + (r.reason ? ' — ' + esc(r.reason) : '') + '</div>'
+    + '<div class="mailbodytext">' + esc(r.body || r.snippet || '(no text)').split(String.fromCharCode(10)).join('<br/>') + '</div>';
+  $('modal').classList.remove('hidden');
+}
+
+document.querySelectorAll('button.stat[data-kind]').forEach(b => {
+  b.onclick = () => {
+    replyFilter = b.dataset.kind;
+    document.querySelectorAll('button.stat[data-kind]').forEach(x =>
+      x.setAttribute('aria-pressed', String(x === b)));
+    renderReplyList();
+  };
+});
+
+renderReplyStats();
+renderReplyList();
 
 /* ================= SECTION 4 — analytics ================= */
 /* Every send is recorded in localStorage; when the app runs somewhere with a

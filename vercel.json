@@ -1,9 +1,18 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["sin1"],
   "functions": {
-    "api/*.js": {
+    "api/send.js": {
       "memory": 1024,
       "maxDuration": 30
+    },
+    "api/replies.js": {
+      "memory": 1024,
+      "maxDuration": 60
+    },
+    "api/*.js": {
+      "memory": 512,
+      "maxDuration": 15
     }
   },
   "cleanUrls": true

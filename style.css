@@ -115,3 +115,219 @@ tr.generic td{background:#fffbe9}
 
 tr.lowconf td{background:#fff4ec}
 .badge.w{background:#ffe0cc;color:#9a4a10}
+
+/* ---------- campaign + reply tables ---------- */
+.badge.running { background: #e8f0ff; color: #1a4fa0; }
+.badge.done    { background: #e6f6ec; color: #17683a; }
+.badge.stopped { background: #fdeaea; color: #a12626; }
+.badge.reply       { background: #e6f6ec; color: #17683a; }
+.badge.ooo         { background: #fff4e0; color: #8a5a00; }
+.badge.bounce      { background: #fdeaea; color: #a12626; }
+.badge.unsubscribe { background: #f0eaf8; color: #5b3a91; }
+.badge.none        { background: #eef0f5; color: #59607a; }
+
+.progresscell { min-width: 130px; }
+.minibar { height: 6px; border-radius: 3px; background: #eef0f5; overflow: hidden; display: flex; }
+.minibar i { display: block; height: 100%; }
+.minibar .s { background: #2f8f56; }
+.minibar .f { background: #c94a4a; }
+
+/* ---------- follow-up composer ---------- */
+.followup { display: grid; gap: 14px; max-width: 860px; }
+.followup > div > label { display: block; font-weight: 600; margin-bottom: 4px; font-size: 13px; }
+
+fieldset.who {
+  border: 1px solid #e3e6ee; border-radius: 8px; padding: 12px 14px; display: grid; gap: 10px;
+}
+fieldset.who legend { font-weight: 600; font-size: 13px; padding: 0 6px; }
+label.chk { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; line-height: 1.4; }
+label.chk input { margin-top: 3px; flex: none; }
+label.chk small.hint { display: block; margin-top: 1px; }
+.always-excluded {
+  margin: 2px 0 0; padding-top: 9px; border-top: 1px dashed #e3e6ee; font-size: 12px;
+}
+#fuSubject { width: 100%; background: #f7f8fb; color: #59607a; }
+
+/* ============================================================
+   MAIL WINDOW  —  one component, used everywhere an email is
+   composed or displayed: Section 3 (compose), Section 5
+   (follow-up) and the sent-mail viewer. Laid out in the order
+   the recipient reads it, so what you build is what they get.
+   ============================================================ */
+.mailwindow {
+  border: 1px solid #dfe3ee; border-radius: 10px; background: #fff;
+  box-shadow: 0 1px 3px rgba(20,25,40,.06); overflow: hidden; max-width: 900px;
+}
+
+/* --- header: From / To / Subject, like a mail client --- */
+.mailhead { border-bottom: 1px solid #eceff6; }
+.mailrow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px; border-bottom: 1px solid #f2f4f9; min-height: 40px;
+}
+.mailrow:last-child { border-bottom: none; }
+.mlabel {
+  flex: none; width: 62px; font-size: 12px; color: #7c8398;
+  text-transform: uppercase; letter-spacing: .04em; font-weight: 600;
+}
+.mailrow input, .mailrow select {
+  flex: 1; border: none; outline: none; background: transparent;
+  font-size: 15px; padding: 2px 0; min-width: 0;
+}
+.mailrow input:focus { box-shadow: none; }
+.mfrom, .mto { flex: 1; font-size: 14px; color: #444b63; }
+.mto.empty, .mfrom.empty { color: #9aa1b5; font-style: italic; }
+.msubject-locked { flex: 1; font-size: 14px; color: #7c8398; }
+.msubject-locked i { color: #9aa1b5; }
+
+/* --- the sheet: greeting, body, sign-off flow as one page --- */
+.mailsheet { padding: 4px 16px 14px; }
+.mgreeting, .mclosing {
+  width: 100%; border: none; outline: none; background: transparent;
+  font: inherit; font-size: 15px; padding: 10px 0 4px; resize: none;
+}
+.mclosing { white-space: pre-line; color: #333a52; padding-top: 6px; }
+.mgreeting:focus, .mclosing:focus { box-shadow: none; background: #fbfcff; }
+.mailsheet .editor {
+  border: none; border-radius: 0; padding: 6px 0; min-height: 190px;
+  font-size: 15px; line-height: 1.65;
+}
+.mailsheet .editor:focus { box-shadow: none; background: #fbfcff; }
+.mrule { border: none; border-top: 1px solid #eceff6; margin: 12px 0 4px; }
+
+/* --- collapsed extras: signature, attachments --- */
+.msection { border-top: 1px solid #f2f4f9; }
+.msection summary {
+  cursor: pointer; padding: 9px 0; font-size: 13px; font-weight: 600; color: #444b63;
+  list-style: none; display: flex; align-items: center; gap: 8px;
+}
+.msection summary::-webkit-details-marker { display: none; }
+.msection summary::before { content: '▸'; color: #9aa1b5; font-size: 11px; }
+.msection[open] summary::before { content: '▾'; }
+.msection summary small { font-weight: 400; color: #9aa1b5; }
+.msectionbody { padding: 4px 0 12px; display: grid; gap: 10px; }
+.mfield { display: block; font-size: 13px; font-weight: 600; color: #444b63; }
+.mfield small { font-weight: 400; color: #9aa1b5; margin-left: 4px; }
+.mfield textarea, .mfield input { margin-top: 5px; }
+
+/* --- quoted original, exactly as Gmail collapses it --- */
+.quoted { border-top: 1px solid #f2f4f9; margin-top: 10px; }
+.quoted summary {
+  cursor: pointer; list-style: none; display: inline-flex; align-items: center;
+  background: #eef0f5; border-radius: 12px; padding: 2px 12px; margin: 10px 0;
+  font-size: 12px; color: #59607a; letter-spacing: .06em;
+}
+.quoted summary::-webkit-details-marker { display: none; }
+.quoted summary:hover { background: #e3e6ee; }
+.quotedbody {
+  border-left: 2px solid #dfe3ee; padding: 4px 0 4px 14px; margin-left: 2px;
+  color: #666d85; font-size: 14px;
+}
+
+/* --- send bar, at the foot like a mail client --- */
+.mailfoot {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 11px 14px; border-top: 1px solid #eceff6; background: #fafbfe;
+}
+.primary.big { padding: 9px 22px; font-size: 14px; border-radius: 8px; }
+.mailfoot .delay { margin-left: auto; color: #7c8398; font-size: 12px; }
+.mailwindow #progressWrap, .mailwindow #fuProgressWrap { padding: 0 14px 14px; }
+
+.toolbar .chiplabel { font-size: 11px; color: #9aa1b5; text-transform: uppercase; letter-spacing: .05em; }
+.mailwindow .toolbar { border-radius: 0; border-left: none; border-right: none; margin: 0; }
+
+/* the follow-up window keeps the audience picker inside the card */
+.mailwindow.followup fieldset.who { border: none; border-top: 1px solid #eceff6; border-radius: 0; margin: 0; }
+
+@media (max-width: 640px) {
+  .mlabel { width: 48px; font-size: 11px; }
+  .mailsheet { padding: 4px 11px 12px; }
+  .mailfoot .delay { margin-left: 0; }
+}
+
+/* ============================================================
+   SCAN BAR  —  a mailbox scan takes seconds, so the control
+   reports progress instead of sitting inert while it works.
+   ============================================================ */
+.scanbar { border: 1px solid #dfe3ee; border-radius: 10px; background: #fafbfe; padding: 12px 14px; margin-bottom: 16px; }
+.scanrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.scanmeta { margin-left: auto; font-size: 12px; }
+#scanProgressWrap { margin-top: 10px; }
+
+.spinner {
+  display: inline-block; width: 13px; height: 13px; margin-right: 7px; vertical-align: -2px;
+  border: 2px solid rgba(255,255,255,.45); border-top-color: #fff; border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.5s; } }
+button[aria-busy="true"] { opacity: .85; cursor: progress; }
+
+/* stat tiles double as filters */
+.stats5 { grid-template-columns: repeat(5, 1fr); }
+@media (max-width: 860px) { .stats5 { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 560px) { .stats5 { grid-template-columns: repeat(2, 1fr); } }
+button.stat { cursor: pointer; font: inherit; text-align: center; transition: border-color .12s, background .12s; }
+button.stat:hover { border-color: #9fb0d8; background: #f2f5fd; }
+button.stat[aria-pressed="true"] { border-color: #3b5bdb; background: #eef2fe; box-shadow: inset 0 0 0 1px #3b5bdb; }
+button.stat:focus-visible { outline: 2px solid #3b5bdb; outline-offset: 2px; }
+.stat.warn span { color: #8a5a00; }
+
+/* ============================================================
+   INBOX LIST  —  every row is a real email, so it reads like a
+   mail client and opens in the same mail window as everything
+   else in the app.
+   ============================================================ */
+.inbox { border: 1px solid #dfe3ee; border-radius: 10px; background: #fff; overflow: hidden; }
+.inbox .empty { padding: 28px 18px; text-align: center; color: #9aa1b5; margin: 0; }
+
+.mailitem {
+  display: grid; grid-template-columns: 22px 200px 1fr auto;
+  gap: 12px; align-items: center; width: 100%; text-align: left;
+  padding: 11px 14px; border: none; border-bottom: 1px solid #f2f4f9;
+  background: #fff; cursor: pointer; font: inherit; border-radius: 0;
+}
+.mailitem:last-child { border-bottom: none; }
+.mailitem:hover { background: #f7f9ff; }
+.mailitem:focus-visible { outline: 2px solid #3b5bdb; outline-offset: -2px; }
+.mailitem .dot { width: 9px; height: 9px; border-radius: 50%; justify-self: center; }
+.dot.reply { background: #2f8f56; } .dot.ooo { background: #d79a1e; }
+.dot.bounce { background: #c94a4a; } .dot.unsubscribe { background: #7b52c4; }
+.dot.none { background: #c3c8d6; }
+.mailitem .who { font-weight: 600; color: #1c2333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mailitem .subj { color: #59607a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mailitem .subj b { color: #1c2333; font-weight: 600; }
+.mailitem .meta { display: flex; align-items: center; gap: 10px; flex: none; }
+.mailitem .when { font-size: 12px; color: #9aa1b5; white-space: nowrap; }
+@media (max-width: 760px) {
+  .mailitem { grid-template-columns: 22px 1fr auto; }
+  .mailitem .subj { grid-column: 2 / -1; }
+}
+
+/* the reason a message was classified the way it was, shown in the viewer */
+.whybar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 9px 14px; background: #f8f9fd; border-bottom: 1px solid #eceff6; font-size: 12.5px; color: #59607a;
+}
+
+/* ---------- campaign drill-down ---------- */
+.detailhead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 4px 0 10px; }
+.detailhead h3 { margin: 0; text-transform: none; letter-spacing: 0; font-size: 16px; color: #1c2333; }
+button.back { border: none; background: none; color: #3b5bdb; padding: 4px 0; font-size: 13px; }
+button.back:hover { background: none; text-decoration: underline; }
+#campDetail { border-top: 1px solid #eceff6; margin-top: 16px; padding-top: 14px; }
+
+/* the conversation trail inside the viewer */
+ol.trail { list-style: none; margin: 0; padding: 0; }
+ol.trail li { position: relative; padding: 0 0 16px 22px; border-left: 2px solid #eceff6; }
+ol.trail li:last-child { border-left-color: transparent; padding-bottom: 0; }
+ol.trail li::before {
+  content: ''; position: absolute; left: -6px; top: 4px;
+  width: 10px; height: 10px; border-radius: 50%; background: #c3c8d6;
+}
+ol.trail li.sent::before     { background: #3b5bdb; }
+ol.trail li.received::before { background: #2f8f56; }
+.trailhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.trailhead .when { font-size: 12px; color: #9aa1b5; margin-left: auto; }
+.trailbody { font-size: 13px; color: #59607a; margin-top: 2px; }
+.mailbodytext { padding: 14px 0; font-size: 14px; line-height: 1.6; }

@@ -2,16 +2,18 @@
   "name": "mailblaster",
   "version": "1.0.0",
   "private": true,
-  "description": "Gmail bulk mailer with name parsing, rich-text body, attachments and analytics",
+  "description": "Gmail bulk mailer with campaign history, database-enforced de-duplication, and reply/out-of-office detection",
   "scripts": {
     "dev": "node dev-server.js",
-    "start": "node dev-server.js"
+    "start": "node dev-server.js",
+    "test": "node test.js"
   },
   "dependencies": {
-    "@vercel/postgres": "^0.10.0",
-    "nodemailer": "^6.9.14"
+    "@neondatabase/serverless": "^1.1.0",
+    "imapflow": "^1.7.1",
+    "nodemailer": "^9.0.5"
   },
   "engines": {
-    "node": "22.x"
+    "node": ">=22.5"
   }
 }

@@ -9,16 +9,19 @@
 const nodemailer = require('nodemailer');
 const { readJson, send, render, stripHtml, gmailTransport } = require('../lib/util');
 const store = require('../lib/store');
+const { describe, httpFor, classify, CODES } = require('../lib/errors');
+const log = require('../lib/log');
+const auth = require('../lib/auth');
 
-module.exports = async function handler(req, res) {
-  if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'POST only' });
+module.exports = log.wrap('send', auth.require(async function handler(req, res) {
+  if (req.method !== 'POST') return send(res, 405, describe('METHOD_NOT_ALLOWED'));
 
   const b = await readJson(req);
   const r = b.recipient || {};
   const fallback = b.fallbackName || 'there';
 
-  if (!b.user || !b.pass) return send(res, 400, { ok: false, error: 'Missing Gmail credentials' });
-  if (!r.email) return send(res, 400, { ok: false, error: 'Missing recipient' });
+  if (!b.user || !b.pass) return send(res, 400, describe('AUTH_REQUIRED'));
+  if (!r.email) return send(res, 400, describe('SEND_NO_RECIPIENT'));
 
   const subject = render(b.subject || '(no subject)', r, fallback);
   const greeting = render(b.greeting || '', r, fallback);
@@ -67,9 +70,15 @@ module.exports = async function handler(req, res) {
 
   const entry = {
     time: new Date().toISOString(),
+    campaignId: b.campaignId || null,
+    /* 0 for an original send, 1+ for each follow-up round, so a person's
+       trail can say "replied to follow-up 2" rather than guessing. */
+    followupRound: Number(b.followupRound || 0),
     from: b.user,
     to: r.email,
     name: r.first || fallback,
+    fullName: r.full || '',
+    confidence: r.confidence || null,
     subject,
     // only real attachments — the inline footer image isn't one
     attachments: (b.attachments || []).map(a => a.filename),
@@ -80,6 +89,14 @@ module.exports = async function handler(req, res) {
 
   const t = gmailTransport(nodemailer, b.user, b.pass, b.port);
 
+  /* A follow-up is a reply in the ORIGINAL thread, not a new message: Gmail
+     nests it under the first email only when both In-Reply-To and References
+     carry the Message-Id of what it answers. */
+  const inReplyTo = b.inReplyTo || undefined;
+  const references = b.references && b.references.length
+    ? (Array.isArray(b.references) ? b.references.join(' ') : String(b.references))
+    : inReplyTo;
+
   try {
     const info = await t.sendMail({
       from: b.fromName ? '"' + b.fromName + '" <' + b.user + '>' : b.user,
@@ -89,17 +106,46 @@ module.exports = async function handler(req, res) {
       text: stripHtml(html),
       attachments,
       replyTo: b.replyTo || undefined,
+      inReplyTo,
+      references,
     });
     entry.status = 'sent';
-    entry.messageId = info.messageId;
+    /* Persisted, not just returned: every future reply is matched back to this
+       send by its Message-Id, so losing it would break reply detection. */
+    entry.messageId = info.messageId || null;
   } catch (e) {
     entry.error = e.message;
+    entry.code = classify(e);
+    entry.retry = (CODES[entry.code] || {}).retry || 'never';
   } finally {
     try { t.close(); } catch (e) {}
   }
 
+  /* The database rejects a second send to the same person in the same
+     campaign, whatever the browser believes. A retried request therefore
+     reports 'duplicate' instead of quietly mailing someone twice. */
   let persisted = false;
-  try { persisted = await store.insert(entry); } catch (e) {}
+  try {
+    persisted = await store.insert(entry);
+  } catch (e) {
+    log.error('persist_failed', { api: 'send', code: classify(e), message: e.message });
+  }
 
-  send(res, 200, { ok: entry.status === 'sent', entry, persisted });
-};
+  if (persisted === 'duplicate') {
+    return send(res, 200, Object.assign(describe('SEND_DUPLICATE'), {
+      ok: false, duplicate: true, entry, persisted: false,
+    }));
+  }
+
+  if (entry.status !== 'sent') {
+    log.warn('send_failed', { to: entry.to, code: entry.code, error: entry.error });
+  }
+
+  send(res, 200, {
+    ok: entry.status === 'sent',
+    entry,
+    persisted: !!persisted,
+    code: entry.code || null,
+    retry: entry.retry || null,
+  });
+}));

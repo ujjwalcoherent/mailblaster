@@ -8,8 +8,10 @@
  */
 const { send } = require('../lib/util');
 const store = require('../lib/store');
+const logger = require('../lib/log');
+const auth = require('../lib/auth');
 
-module.exports = async function handler(req, res) {
+module.exports = logger.wrap('log', auth.require(async function handler(req, res) {
   if (!(await store.available())) {
     return send(res, 200, { ok: true, available: false, driver: 'none', reason: store.reason(), rows: [] });
   }
@@ -18,4 +20,4 @@ module.exports = async function handler(req, res) {
     return send(res, 200, { ok: true, available: true, driver: store.driver(), rows: [] });
   }
   send(res, 200, { ok: true, available: true, driver: store.driver(), rows: await store.list(2000) });
-};
+}));
