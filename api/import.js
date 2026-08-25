@@ -2,9 +2,17 @@
 /**
  * Read past campaigns back out of the Gmail Sent folder.
  *
- *   POST /api/import { action: 'scan',    user, pass, days, subject, to, pasted, cursor }
+ *   POST /api/import { action: 'scan',    user, pass, days, since, until, subject, query, to, pasted, cursor }
  *   POST /api/import { action: 'preview', user, pass, mailbox, uids }
  *   POST /api/import { action: 'commit',  user, pass, mailbox, uids, name }
+ *
+ * `since`/`until` are plain "YYYY-MM-DD" calendar dates and take priority
+ * over the older relative `days` lookback when given, so "21 Aug 2026 to
+ * today" can be expressed directly rather than approximated by a day count.
+ * `query` searches subject OR body text, server-side, in the same IMAP
+ * round trip — not a separate fetch-and-filter pass — which is what lets a
+ * loose fragment like "great meeting at the event" find both "...India
+ * Health 2026" and the bare version someone sent without the event name.
  *
  * The point is threading: a follow-up can only nest under the original if we
  * know that original's Message-Id, and the Sent folder is the only place it
@@ -59,11 +67,34 @@ async function scan(b, res) {
     subject = subject || pasted.subject;
   }
 
-  const days = Math.min(Math.max(Number(b.days) || 90, 1), 3650);
+  /* Two ways to say "how far back": an explicit date range (b.since/b.until,
+     e.g. "21 Aug 2026 to today"), or the older relative b.days lookback.
+     Explicit dates win when given. IMAP's BEFORE is exclusive of time, so
+     "through today" needs the day AFTER b.until (or today's own sends are
+     silently excluded) — that adjustment happens here, once, rather than
+     asking every caller to remember it. b.since/b.until are plain
+     "YYYY-MM-DD" calendar dates from a UI date picker, not timezone-shifted
+     ISO instants: IMAP SINCE/BEFORE disregard time-of-day and timezone
+     entirely (RFC 3501), comparing only the calendar day, so there's nothing
+     to convert — but a JS Date built from a timestamp instead of a bare
+     calendar date can land on the wrong day depending on the caller's local
+     offset, which is exactly the bug this plain-string convention avoids. */
+  let since, until;
+  if (b.since) {
+    since = new Date(b.since + 'T00:00:00Z');
+  } else {
+    const days = Math.min(Math.max(Number(b.days) || 90, 1), 3650);
+    since = new Date(Date.now() - days * 86400000);
+  }
+  if (b.until) {
+    const endDay = new Date(b.until + 'T00:00:00Z');
+    until = new Date(endDay.getTime() + 86400000);   // BEFORE is exclusive: push to the next day
+  }
+
   const result = await imap.scanSent({
     user: b.user, pass: b.pass,
-    since: new Date(Date.now() - days * 86400000),
-    subject, to: b.to || null,
+    since, until,
+    subject, query: b.query || null, to: b.to || null,
     cursor: b.cursor || null,
     deadline: Date.now() + BUDGET_MS,
   });

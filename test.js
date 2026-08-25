@@ -335,6 +335,30 @@ async function importerTests() {
   await test('no samples returns empty rather than throwing', () => {
     assert.strictEqual(rebuildTemplate([]).template, '');
   });
+
+  group('importer — scanSent search-object building (date range + subject/body query)');
+  const { buildSentSearch } = require('./lib/imap');
+  await test('no params at all searches everything', () => {
+    assert.deepStrictEqual(buildSentSearch({}), { all: true });
+  });
+  await test('since/until map straight to IMAP SINCE/BEFORE', () => {
+    const since = new Date('2026-08-21T00:00:00Z');
+    const until = new Date('2026-08-26T00:00:00Z');   // caller already pushed this to "day after"
+    assert.deepStrictEqual(buildSentSearch({ since, until }), { since, before: until });
+  });
+  await test('a bare subject still works exactly as before (no regression)', () => {
+    assert.deepStrictEqual(buildSentSearch({ subject: 'India Health 2026' }),
+      { subject: 'India Health 2026' });
+  });
+  await test('query searches subject OR body in one round trip, not two separate calls', () => {
+    const r = buildSentSearch({ query: 'great meeting at the event' });
+    assert.deepStrictEqual(r, { or: [{ subject: 'great meeting at the event' }, { body: 'great meeting at the event' }] });
+  });
+  await test('date range and query compose together', () => {
+    const since = new Date('2026-08-21T00:00:00Z');
+    const r = buildSentSearch({ since, query: 'great meeting' });
+    assert.deepStrictEqual(r, { since, or: [{ subject: 'great meeting' }, { body: 'great meeting' }] });
+  });
 }
 
 /* ================= auth ================= */
