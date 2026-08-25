@@ -251,6 +251,20 @@ info@somecompany.com"></textarea>
   <h2>Section 4 — Campaigns &amp; history</h2>
   <p class="hint" id="logSource">Source: —</p>
 
+  <h3>Due for follow-up</h3>
+  <p class="hint">Every finished campaign checked against how long it's been since it ran, across
+     every saved account — a due-list you review and act on, not a scheduler that sends anything by
+     itself. Sending still always happens as a deliberate click in Section 5, the same as
+     "Send follow-up now"; this just tells you who's due without checking each campaign by hand.</p>
+  <div class="row">
+    <label class="inline">Flag campaigns finished more than
+      <input id="dueAfterDays" type="number" value="3" min="1" max="60" style="width:60px"/> day(s) ago
+    </label>
+    <button id="btnCheckDue" class="primary">Check what's due</button>
+    <span id="dueMsg" class="msg" role="status" aria-live="polite"></span>
+  </div>
+  <div id="dueList"></div>
+
   <h3>Campaign runs</h3>
   <p class="hint">Every run of a campaign, newest first. With several accounts saved in Section 1,
      this shows all of them together so nothing needs re-checking one at a time — filter to one

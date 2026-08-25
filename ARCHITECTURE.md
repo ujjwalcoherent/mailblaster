@@ -141,6 +141,25 @@ accounts are sending concurrently, so each account card shows its own
 scoped by sender and time — no new table, no new tracking, just a query
 Google's own limit made worth surfacing before it's hit rather than after.
 
+### "Due for follow-up" is a review-and-confirm list, not a scheduler
+
+Section 4 has a button that checks every finished campaign, across every
+saved account, against how long ago it ran, and for anyone that check
+actually flags, re-verifies with `/api/followup` that a real person is
+still eligible (not suppressed, not still out of office, not already
+chased three times) before calling them "due." That distinction matters:
+being old doesn't mean anyone is left to follow up with.
+
+This exists alongside "Send follow-up now" (Section 5, one campaign, one
+click) rather than replacing it, because this app has no server-side cron
+and, by design, never stores an App Password server-side (see "Credentials
+never reach the server's storage," above) — there is nothing that COULD
+send unattended even if it wanted to. "Automated" here means: one click
+surfaces everyone currently due across every account, and clicking through
+takes you straight to the same manual send-and-confirm flow that already
+exists. It is a faster way to find who needs chasing, not a background
+sender.
+
 ### Classification order is not the obvious one
 
 An out-of-office *is* a reply mechanically — same thread, carries

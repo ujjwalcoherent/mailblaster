@@ -286,9 +286,13 @@ function renderAccountList() {
       : '';
     const quota = s.sentToday && typeof s.sentToday.sent === 'number'
       ? quotaHtml(s.sentToday) : '';
+    // The chip alone just says "error" — a hover title with the actual
+    // message means the reason doesn't disappear the moment verifyMsg's
+    // text is overwritten by whatever's typed next.
+    const errorTitle = (!s.sending && s.lastError) ? ' title="' + esc(s.lastError) + '"' : '';
     return '<div class="accountcard' + (editing ? ' editing' : '') + '" data-email="' + esc(email) + '">'
       + '<span class="addr">' + esc(email) + '</span>'
-      + '<span class="acctstatus ' + status + '">' + esc(statusLabel) + '</span>'
+      + '<span class="acctstatus ' + status + '"' + errorTitle + '>' + esc(statusLabel) + '</span>'
       + progressBar
       + quota
       + '<button class="edit" data-email="' + esc(email) + '">Edit</button>'
@@ -1533,6 +1537,82 @@ function fmtWhen(isoStr) {
   return d.toLocaleDateString([], { day: 'numeric', month: 'short' })
     + ', ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
+
+/* ---------- "due for follow-up" — a review-and-confirm list, not a scheduler ----------
+   Both "send follow-up now" (Section 5, one click, one campaign) and this
+   "what's due across everything" view exist side by side on purpose — this
+   app has no server-side cron and credentials are never stored server-side,
+   so "automated" here can only ever mean "one click surfaces everyone
+   currently due, for you to act on," never an unattended sender that runs
+   without the browser open. */
+async function checkDueFollowups() {
+  const days = Math.max(1, Number($('dueAfterDays').value) || 3);
+  const btn = $('btnCheckDue');
+  btn.disabled = true;
+  say($('dueMsg'), 'Checking every finished campaign…', true);
+  $('dueList').innerHTML = '';
+
+  try {
+    const r = await fetch('/api/campaigns').then(x => x.json());   // every account, combined
+    if (!r.ok || !r.available) { say($('dueMsg'), 'No database connected.', false); return; }
+
+    const cutoff = Date.now() - days * 86400000;
+    const candidates = (r.campaigns || []).filter(c =>
+      c.status === 'done' && c.finishedAt && new Date(c.finishedAt).getTime() < cutoff
+      && !c.imported   // an imported campaign needs its replies scanned first — see api/import.js's nextStep
+    );
+
+    if (!candidates.length) {
+      say($('dueMsg'), 'Nothing finished more than ' + days + ' day(s) ago.', true);
+      return;
+    }
+
+    /* A campaign finishing N days ago doesn't mean anyone is actually still
+       eligible — /api/followup decides that server-side (do_not_contact,
+       ooo_until, the 3-chase cap), so each candidate is checked for real,
+       not just listed because it's old. */
+    const due = [];
+    for (const c of candidates) {
+      try {
+        const f = await fetch('/api/followup?campaign=' + encodeURIComponent(c.id) + '&cap=3').then(x => x.json());
+        if (f.ok && f.candidates && f.candidates.length) due.push({ campaign: c, count: f.candidates.length, counts: f.counts });
+      } catch (e) { /* one campaign failing to check must not stop the rest */ }
+    }
+
+    say($('dueMsg'), due.length
+      ? due.length + ' campaign(s) have someone due for a follow-up.'
+      : 'Nothing currently eligible — everyone due has already replied, opted out, or been chased enough.', true);
+    $('dueList').innerHTML = due.length ? '<div class="tablewrap"><table><thead><tr>'
+      + '<th>Account</th><th>Campaign</th><th>Finished</th><th>Due</th><th></th></tr></thead><tbody>'
+      + due.map(d => '<tr>'
+          + '<td class="mono" style="font-size:11px">' + esc(d.campaign.from || '—') + '</td>'
+          + '<td>' + esc(d.campaign.name) + '</td>'
+          + '<td>' + fmtWhen(d.campaign.finishedAt) + '</td>'
+          + '<td>' + d.count + ' recipient(s)</td>'
+          + '<td><button class="review" data-id="' + d.campaign.id + '">Review &amp; send</button></td>'
+          + '</tr>').join('')
+      + '</tbody></table></div>' : '';
+
+    $('dueList').querySelectorAll('.review').forEach(b => b.onclick = () => {
+      /* Hands off to the exact same manual "send follow-up" flow in
+         Section 5 — this view only ever finds candidates and stops; the
+         actual send is still the one-click confirm that already exists. */
+      const target = due.find(d => String(d.campaign.id) === b.dataset.id);
+      if (!target) return;
+      document.querySelector('[data-tab="s5"]').click();
+      campaignCache = r.campaigns;
+      fillFollowupCampaigns();
+      $('fuCampaign').value = target.campaign.id;
+      loadFollowupAudience();
+      $('fuCampaign').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  } catch (e) {
+    say($('dueMsg'), 'Could not reach the server: ' + e.message, false);
+  } finally {
+    btn.disabled = false;
+  }
+}
+if ($('btnCheckDue')) $('btnCheckDue').onclick = checkDueFollowups;
 
 function renderCampaigns() {
   const tb = document.querySelector('#campTable tbody');
