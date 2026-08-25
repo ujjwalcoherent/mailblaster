@@ -255,6 +255,30 @@ One unrelated email sharing a subject would otherwise make every token look
 variable and reduce the template to noise, so outliers are found against the
 majority shape and set aside first — then reported, never silently dropped.
 
+**Multi-round threads split into one campaign per round, not one campaign
+per import.** If the chosen messages include a manual follow-up someone
+sent before this tool existed, `linkThreadPositions()` (`lib/importer.js`)
+matches each message's In-Reply-To/References against the other imported
+messages' Message-Ids to work out who replied to whom, scoped to one
+recipient's own thread — never across different people in the same
+mail-merge burst, where sharing a subject and a burst window means nothing
+about who replied to what. Each round then gets its own campaign row,
+chained by `parentId` exactly like a native follow-up chain
+(`api/followup.js`), because `sends(campaign_id, recipient_id)` is UNIQUE —
+the same guard against double-sending someone in one run — so a person's
+original and their manual follow-up cannot both live in one campaign. This
+is what makes `GET /api/thread` render the whole imported conversation
+correctly immediately after import, and what makes a follow-up sent
+afterward thread onto the latest round instead of the very first message.
+
+**Finding a campaign that doesn't match by exact subject.** `scan` can
+search Sent by date range (`since`/`until`) and by a subject-or-body text
+fragment (`query`), evaluated server-side by Gmail's own IMAP search — not
+a fetch-then-filter fallback. This is what catches "Great meeting at the
+event India Health 2026" and the version someone sent without the event
+name: searching the shared invariant fragment ("great meeting at the
+event") rather than the full literal subject.
+
 ---
 
 ## Testing
@@ -306,15 +330,6 @@ run, not a hypothetical.)
 - **Sections 1 and 2 predate the visual rework** in 3, 4 and 5 (Section 1
   has since been redone as the multi-account list; Section 2's recipient
   parsing is unchanged).
-- **Thread-linking for imported campaigns is not wired up yet.**
-  `lib/imap.js`'s `scanSent()` now fetches `In-Reply-To`/`References` on
-  Sent-folder messages (the prerequisite), but nothing yet uses those
-  headers to detect that one imported message was itself a reply to another
-  imported message and assign it the correct `followupRound`/
-  `in_reply_to_send` — every imported send is still recorded as round 0.
-  This matters for a campaign that already had manual back-and-forth before
-  this tool existed: a follow-up sent after import would thread onto the
-  very first message rather than the latest point in the conversation.
 - **No LLM-assisted fuzzy campaign matching.** The plan for this (matching
   "...at India Health 2026" against "...at the event" via DeepSeek when
   exact-string clustering misses) has not been built — the deterministic
