@@ -353,6 +353,32 @@ reason attached rather than silently imported.
 campaign already exist in the inbox — until they are scanned, someone who
 answered weeks ago is not yet suppressed.
 
+### Finding a campaign by date range and subject-or-body text
+
+`scan` additionally accepts:
+
+```json
+{ "action": "scan", "user": "...", "pass": "...",
+  "since": "2026-08-21", "until": "2026-08-26",
+  "query": "great meeting at the event" }
+```
+
+| Field | Meaning |
+|---|---|
+| `since` / `until` | Plain `YYYY-MM-DD` calendar dates. Take priority over the older relative `days` lookback when given. |
+| `query` | Free text searched against **subject OR body**, server-side, in the same IMAP round trip — not a separate fetch-and-filter pass. |
+
+Two things worth knowing before relying on this:
+
+- IMAP's `SINCE`/`BEFORE` disregard time-of-day and timezone entirely (RFC
+  3501) — they compare calendar days only. `until` is pushed to the day
+  *after* the one given, because `BEFORE` is exclusive: without that,
+  "through today" would silently exclude anything sent today.
+- `query` exists because subject matching alone misses real cases: "Great
+  meeting at the event India Health 2026" and "Great meeting at the event"
+  share no exact subject, but a body-inclusive text search on the invariant
+  fragment ("great meeting at the event") finds both.
+
 ---
 
 ## Libraries
