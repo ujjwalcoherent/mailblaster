@@ -1017,11 +1017,29 @@ refreshComposeSummaries();
 /* Load the real campaign history for whichever Gmail account is in Section 1.
    Scoped by address so two people sharing a browser do not see each other's
    runs; the App Password is never sent anywhere for this. */
+/* Keep the account filter dropdown in sync with whatever is saved in
+   Section 1, so a newly added account shows up as a filter option without a
+   page reload. Defaults to "All accounts" (empty owner -> api/campaigns.js
+   returns every account's history) rather than silently narrowing to
+   whichever one happens to be active in Section 1 \u2014 the whole point of the
+   combined view is not having to switch accounts just to see everything. */
+function refreshCampaignAccountFilter() {
+  const sel = $('campAccountFilter');
+  if (!sel) return;
+  const current = sel.value;
+  const accounts = savedAccountList();
+  sel.innerHTML = '<option value="">All accounts</option>'
+    + accounts.map(a => '<option value="' + esc(a) + '">' + esc(a) + '</option>').join('');
+  if (accounts.includes(current)) sel.value = current;
+}
+if ($('campAccountFilter')) $('campAccountFilter').addEventListener('change', loadCampaigns);
+
 async function loadCampaigns() {
-  const owner = ($('gUser') && $('gUser').value.trim()) || '';
+  refreshCampaignAccountFilter();
+  const owner = ($('campAccountFilter') && $('campAccountFilter').value) || '';
   const tb = document.querySelector('#campTable tbody');
   if (tb && !campaignCache.length) {
-    tb.innerHTML = '<tr><td colspan="9" class="hint">Loading\u2026</td></tr>';
+    tb.innerHTML = '<tr><td colspan="10" class="hint">Loading\u2026</td></tr>';
   }
   try {
     const url = '/api/campaigns' + (owner ? '?owner=' + encodeURIComponent(owner) : '');
@@ -1031,14 +1049,14 @@ async function loadCampaigns() {
     } else {
       campaignCache = [];
       if (tb) {
-        tb.innerHTML = '<tr><td colspan="9" class="hint">'
+        tb.innerHTML = '<tr><td colspan="10" class="hint">'
           + (r && r.reason ? esc(r.reason) : 'No database connected.') + '</td></tr>';
         return;
       }
     }
   } catch (e) {
     campaignCache = [];
-    if (tb) tb.innerHTML = '<tr><td colspan="9" class="msg bad">Could not reach the server.</td></tr>';
+    if (tb) tb.innerHTML = '<tr><td colspan="10" class="msg bad">Could not reach the server.</td></tr>';
     return;
   }
   renderCampaigns();
@@ -1459,7 +1477,7 @@ function renderCampaigns() {
   const tb = document.querySelector('#campTable tbody');
   if (!tb) return;
   if (!campaignCache.length) {
-    tb.innerHTML = '<tr><td colspan="9">No campaigns yet for this Gmail account. '
+    tb.innerHTML = '<tr><td colspan="10">No campaigns yet. '
       + 'Send one from Section 3, or import a past campaign from your Sent folder.</td></tr>';
     return;
   }
@@ -1467,6 +1485,7 @@ function renderCampaigns() {
     const done = c.sent + c.failed;
     const pct = c.total ? Math.round(done / c.total * 100) : 100;
     return '<tr>'
+      + '<td class="mono" style="font-size:11px">' + esc(c.from || '—') + '</td>'
       + '<td>' + fmtWhen(c.startedAt) + '</td>'
       + '<td><b>' + esc(c.name) + '</b>'
         + (c.imported ? ' <span class="badge p" title="Imported from Gmail">imported</span>' : '') + '</td>'

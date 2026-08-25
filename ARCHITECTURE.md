@@ -42,7 +42,7 @@ data               Neon Postgres (hosted) · SQLite (local)
 
 Endpoints stay thin on purpose: every piece of judgement lives in a library
 that can be tested without a network, a mailbox or a database. That is why
-`npm test` runs 74 tests in a second with no secrets.
+`npm test` runs 96 tests in a second with no secrets.
 
 ---
 
@@ -110,6 +110,36 @@ or job state to manage.
 The cost: the campaign dies if the tab closes. That is why `beforeunload`
 warns, and why **resume rebuilds the remainder from the database** rather than
 from anything the client remembered.
+
+### Several accounts can send at once, because the database already scoped by account — the browser didn't
+
+The database and every endpoint were always safely multi-tenant: `campaigns`,
+`recipients`' send history, and suppression are all scoped by `from_email`,
+indexed for exactly that lookup. What wasn't safe was the browser: `sending`
+and `stopRequested` used to be two page-wide flags, so clicking Stop on one
+account's mail window silently killed every other account's in-flight send
+loop too, because both read and wrote the same variable — there was only ever
+one of each, no matter how many campaigns were technically running.
+
+The fix is an `AccountSession` per saved account (`app.js`), keyed by
+lowercased email, holding its own `sending`/`stopRequested`/credentials. A
+send loop binds to the session of the account it was actually started
+for — captured once at the top of the loop — not to whichever account
+happens to be the one showing in Section 1 by the time a later iteration
+runs. Section 1 itself becomes a list of account cards rather than one form;
+editing an account swaps which session the shared form is currently a view
+of, the same way the mail-window template is one definition cloned per
+purpose. Section 4's campaign list defaults to showing every saved account
+together (an empty `owner` on `/api/campaigns` already meant "everyone" —
+the browser just never asked for it that way before), so checking on several
+running campaigns doesn't mean switching accounts one at a time.
+
+Gmail's own daily cap (500 recipients/24h personal, 2,000 Workspace — a
+rolling window, not a midnight reset) is easy to hit invisibly once several
+accounts are sending concurrently, so each account card shows its own
+`sentToday` against that cap live, sourced from a plain count over `sends`
+scoped by sender and time — no new table, no new tracking, just a query
+Google's own limit made worth surfacing before it's hit rather than after.
 
 ### Classification order is not the obvious one
 
@@ -229,7 +259,7 @@ majority shape and set aside first — then reported, never silently dropped.
 
 ## Testing
 
-`npm test` — 74 tests, SQLite by default so it needs no network or secrets.
+`npm test` — 96 tests, SQLite by default so it needs no network or secrets.
 Set `DATABASE_URL` to run the same store tests against Postgres; both must
 pass, and the drivers are expected to behave identically.
 
@@ -237,10 +267,24 @@ The store tests are written as invariants, not implementation checks —
 `THE GUARD: the same person cannot be sent twice in one campaign` fails loudly
 if the constraint is ever dropped.
 
-The frontend is verified by executing `app.js` in jsdom: it must run without
-throwing, mount both mail windows, and leave no button without a handler. This
-caught a real crash where one stale element id threw during load and left every
-handler after it unbound — which presented as "nothing works".
+The frontend is verified by executing `app.js` against a real (jsdom)
+document built from `index.html`: it must run without throwing, and every
+button should end up with a bound click handler. This is a `devDependency`
+(`jsdom`), so it's skipped gracefully — not a suite failure — if it's ever
+missing from `node_modules`.
+
+This caught a real, pre-existing bug the moment it was written:
+`loadFollowupAudience()` wrote to `$('fuCount').textContent` unguarded, and
+no element with that id exists anywhere in `index.html` or the cloned
+mail-window template. Clearing the follow-up campaign picker threw every
+time, which — because this file wires handlers top-to-bottom as it
+executes — silently left every handler registered after that line unbound.
+That presents to a user as "nothing works," with no error visible unless the
+console happens to be open. (An earlier version of this document claimed
+this exact test already existed and had already caught a bug like this;
+it hadn't — the description was accurate, the code wasn't there yet. It is
+now, and the bug it describes catching is a real one it found on its first
+run, not a hypothetical.)
 
 ---
 

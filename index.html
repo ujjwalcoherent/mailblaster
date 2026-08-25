@@ -252,12 +252,21 @@ info@somecompany.com"></textarea>
   <p class="hint" id="logSource">Source: —</p>
 
   <h3>Campaign runs</h3>
-  <p class="hint">Every run of a campaign, newest first, for the Gmail account in Section 1.
-     Follow-up sends a threaded reply to people who never responded.</p>
+  <p class="hint">Every run of a campaign, newest first. With several accounts saved in Section 1,
+     this shows all of them together so nothing needs re-checking one at a time — filter to one
+     account, or leave it on "All accounts" for the combined view. Follow-up sends a threaded
+     reply to people who never responded.</p>
+  <div class="row">
+    <label class="inline">Account
+      <select id="campAccountFilter" style="width:auto;margin-top:0">
+        <option value="">All accounts</option>
+      </select>
+    </label>
+  </div>
   <div class="tablewrap">
     <table id="campTable">
       <thead><tr>
-        <th>Started</th><th>Campaign</th><th>Subject</th><th>Progress</th>
+        <th>Account</th><th>Started</th><th>Campaign</th><th>Subject</th><th>Progress</th>
         <th>Replied</th><th>OOO</th><th>Bounced</th><th>Status</th><th>Follow-up</th>
       </tr></thead>
       <tbody></tbody>

@@ -88,13 +88,15 @@ kept, with their send history reset.
 
 | Query | Purpose |
 |---|---|
-| `owner` | Scope to one Gmail account (recommended) |
+| `owner` | Scope to one Gmail account. Omit it to get every account's campaigns together — the combined view a multi-account dashboard needs. |
 | `limit` | Max rows, default 100, capped at 500 |
 | `id` + `people=1` | The people inside one campaign |
+| `quota` | An account's email — returns its rolling 24h send count instead of a campaign list (see below) |
 
 ```json
 { "ok": true, "campaigns": [
   { "id": "3", "name": "Q3 Outreach", "subject": "Introducing our new range",
+    "from": "me@gmail.com",
     "status": "done", "sent": 240, "failed": 4, "total": 244,
     "startedAt": "...", "finishedAt": "..." } ] }
 ```
@@ -102,6 +104,41 @@ kept, with their send history reset.
 With `people=1`, each row carries that person's lifetime state — `status`,
 `followups`, `contacts`, `repliedAt`, `doNotContact` — because suppression
 belongs to the person, not to a single send.
+
+### `GET /api/campaigns?quota=<email>`
+
+```json
+{ "ok": true, "quota": { "sent": 340, "limit": 500 } }
+```
+
+Google enforces its own per-account daily sending cap — 500 recipients per
+rolling 24 hours on a personal Gmail account, 2,000 on Workspace — and this
+app has no control over it. `sent` counts delivered `sends` rows for that
+address in the last 24 hours (a rolling window, not "since midnight," which
+is how Gmail's own cap actually resets). This exists so a UI running several
+accounts at once can show each one's remaining headroom up front, rather than
+the first sign of trouble being a `SEND_QUOTA_EXCEEDED` in the middle of a
+campaign.
+
+### `POST /api/campaigns`
+
+```json
+{ "action": "start", "from": "me@gmail.com", "subject": "Hi {{name}}", "total": 50 }
+→ { "ok": true, "campaignId": 12 }
+
+{ "action": "finish", "campaignId": 12, "status": "done" }
+→ { "ok": true }
+```
+
+Starts or closes out a campaign row. This exists because sending a fresh
+(non-follow-up, non-imported) campaign previously had no code path that ever
+called this — every `/api/send` in an ordinary compose-and-send campaign was
+persisted with `campaign_id = NULL`. That silently broke two things: this
+endpoint's own `GET` never listed the run, and `/api/followup` — which
+requires a real campaign id — could never find anyone to chase for a
+campaign sent the normal way. The browser now starts a campaign before its
+send loop and finishes it after, exactly as `/api/followup` and `/api/import`
+already do for their own runs.
 
 ---
 
@@ -172,6 +209,16 @@ the UI gets live per-recipient progress.
 message. Gmail nests it only when `inReplyTo` and `references` carry the
 `Message-Id` of the message being answered — which is why every send persists
 its own `message_id`.
+
+`references` must be the **whole ancestor chain**, not just the immediate
+parent (RFC 5322 §3.6.4: a message's References is its parent's References
+plus the parent's own Message-Id). `/api/followup`'s candidates already carry
+this pre-accumulated — a round 3 follow-up's `references` is `[round0Id,
+round1Id, round2Id]`, not just `[round2Id]`. Sending only the immediate
+parent was a real bug here: threading still worked for one round, and only
+broke ancestry on the third, which is exactly the kind of thing that survives
+testing against a single follow-up round and fails against a real chase
+sequence.
 
 **Duplicates.** A second send to the same person in the same campaign is
 rejected by a UNIQUE index in the database, not by browser logic:
