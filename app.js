@@ -1821,3 +1821,199 @@ $('btnExport').onclick = () => {
 };
 
 loadAnalytics();
+
+/* ================= SECTION 4 (cont.) — finding campaigns sent before this
+   tool, or under a subject that varied per recipient =================
+
+   The endpoint (api/import.js) has existed since before this UI did --
+   ARCHITECTURE.md's own "Known gaps" said as much ("No import UI. The
+   endpoint works; nothing drives it yet."). This wires it up: search Sent by
+   date range and/or a subject-or-body text fragment -> cluster the results
+   into candidate campaigns with a confidence and a reason (never silently) ->
+   preview the rebuilt template for the chosen cluster -> commit it into this
+   app's own history, after which it behaves exactly like a campaign sent
+   from here (follow-ups, suppression, the full thread view all just work). */
+
+let importClusters = [];
+let importMailbox = null;
+let importUser = '';
+
+function refreshImportAccountList() {
+  const sel = $('impUser');
+  if (!sel) return;
+  const current = sel.value;
+  const accounts = savedAccountList();
+  sel.innerHTML = '<option value="">— choose a saved account —</option>'
+    + accounts.map(a => '<option value="' + esc(a) + '">' + esc(a) + '</option>').join('');
+  if (accounts.includes(current)) sel.value = current;
+  else if (accounts.includes(activeAccountEmail)) sel.value = activeAccountEmail;
+}
+refreshImportAccountList();
+
+if ($('btnImportScan')) $('btnImportScan').onclick = async () => {
+  const user = $('impUser').value.trim();
+  if (!user) return say($('importMsg'), 'Choose which account’s Sent folder to search.', false);
+  const s = session(user);
+  if (!s || !s.gPass) return say($('importMsg'), 'That account has no saved App Password — add it in Section 1 first.', false);
+
+  const query = $('impQuery').value.trim();
+  const since = $('impSince').value || null;
+  const until = $('impUntil').value || null;
+  const pasted = $('impPasted').value.trim();
+  if (!query && !since && !pasted) {
+    if (!confirm('No search text or start date given — this will list everything in the last 90 days. Continue?')) return;
+  }
+
+  importUser = user;
+  const btn = $('btnImportScan');
+  btn.disabled = true;
+  say($('importMsg'), 'Searching Sent folder…', true);
+  $('importResults').innerHTML = '';
+  $('importPreview').classList.add('hidden');
+
+  try {
+    let cursor = null, rounds = 0, examined = 0, total = 0;
+    let mailbox = null;
+    /* Each /api/import scan call clusters only the UIDs IT fetched — a
+       cursor page's worth, not the whole search. A multi-page scan (the
+       server stops early at its own time budget and hands back a cursor to
+       resume from) would otherwise show only the LAST page's clusters,
+       silently dropping every earlier page's results. Merge by cluster key
+       across pages instead of overwriting, combining recipient/uid lists
+       for a key seen on more than one page. */
+    const byKey = new Map();
+    do {
+      const r = await fetch('/api/import', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'scan', user, pass: s.gPass,
+          query: query || null, since, until, pasted: pasted || null, cursor,
+        }),
+      }).then(x => x.json());
+      if (!r.ok) { say($('importMsg'), (r.error || 'Search failed') + (r.hint ? ' — ' + r.hint : ''), false); break; }
+      mailbox = r.mailbox;
+      (r.clusters || []).forEach(c => {
+        const prev = byKey.get(c.key);
+        if (!prev) { byKey.set(c.key, c); return; }
+        prev.uids = [...new Set([...prev.uids, ...c.uids])];
+        prev.messageIds = [...new Set([...prev.messageIds, ...c.messageIds])];
+        prev.recipients = [...new Set([...prev.recipients, ...c.recipients])];
+        prev.recipientCount = prev.recipients.length;
+        prev.count += c.count;
+        prev.alreadyImported = (prev.alreadyImported || 0) + (c.alreadyImported || 0);
+        if (String(c.firstAt) < String(prev.firstAt)) prev.firstAt = c.firstAt;
+        if (String(c.lastAt) > String(prev.lastAt)) prev.lastAt = c.lastAt;
+      });
+      examined += r.examined || 0;
+      total = r.total || total;
+      cursor = r.done ? null : r.cursor;
+      say($('importMsg'), examined + (total ? ' of ' + total : '') + ' messages examined · '
+        + byKey.size + ' candidate campaign(s) found so far…', true);
+    } while (cursor && ++rounds < 20);
+
+    importClusters = [...byKey.values()];
+    importMailbox = mailbox;
+    renderImportClusters();
+    say($('importMsg'), importClusters.length
+      ? importClusters.length + ' candidate campaign(s) found.'
+      : 'Nothing matched. Try a wider date range or a shorter search fragment.', importClusters.length > 0);
+  } catch (e) {
+    say($('importMsg'), 'Could not reach the server: ' + e.message, false);
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+/* Confidence is reported, never enforced (importer.js's own design: "a slow,
+   hand-sent campaign is still a campaign, it just needs a human to confirm
+   it") -- so every cluster shows its reason, and low-confidence ones are not
+   hidden, just visually deprioritised. */
+function renderImportClusters() {
+  const host = $('importResults');
+  if (!host) return;
+  if (!importClusters.length) { host.innerHTML = ''; return; }
+  host.innerHTML = '<div class="tablewrap"><table><thead><tr>'
+    + '<th>Confidence</th><th>Subject</th><th>Recipients</th><th>Span</th><th>Why</th><th></th>'
+    + '</tr></thead><tbody>'
+    + importClusters.map((c, i) => '<tr class="' + (c.confidence === 'low' ? 'lowconf' : '') + '">'
+      + '<td><span class="badge ' + (c.confidence === 'high' ? 'sent' : c.confidence === 'medium' ? 'g' : 'w') + '">' + esc(c.confidence) + '</span></td>'
+      + '<td>' + esc(c.subject || '(no subject)') + (c.alreadyImported ? ' <span class="badge p">already imported</span>' : '') + '</td>'
+      + '<td>' + c.recipientCount + '</td>'
+      + '<td>' + esc(humanSpan(c.spanMs)) + '</td>'
+      + '<td class="hint">' + esc(c.reason) + '</td>'
+      + '<td><button class="preview" data-i="' + i + '"' + (c.alreadyImported === c.count ? ' disabled' : '') + '>Preview</button></td>'
+      + '</tr>').join('')
+    + '</tbody></table></div>';
+  host.querySelectorAll('.preview').forEach(b => b.onclick = () => previewImportCluster(importClusters[+b.dataset.i]));
+}
+function humanSpan(ms) {
+  if (!ms) return 'one moment';
+  if (ms < 60000) return Math.round(ms / 1000) + 's';
+  if (ms < 3600000) return Math.round(ms / 60000) + 'm';
+  if (ms < 86400000) return Math.round(ms / 3600000) + 'h';
+  return Math.round(ms / 86400000) + 'd';
+}
+
+let importPreviewCluster = null;
+
+async function previewImportCluster(cluster) {
+  importPreviewCluster = cluster;
+  const s = session(importUser);
+  const box = $('importPreview');
+  box.classList.remove('hidden');
+  box.innerHTML = '<p class="hint">Loading preview…</p>';
+  try {
+    const r = await fetch('/api/import', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'preview', user: importUser, pass: s.gPass, mailbox: importMailbox, uids: cluster.uids }),
+    }).then(x => x.json());
+    if (!r.ok) { box.innerHTML = '<p class="msg bad">' + esc(r.error || 'Preview failed') + '</p>'; return; }
+
+    box.innerHTML = '<h3>Preview — ' + esc(cluster.subject || '(no subject)') + '</h3>'
+      + '<p class="hint">Rebuilt template, confidence <b>' + esc(r.confidence) + '</b>'
+      + (r.note ? ' — ' + esc(r.note) : '') + '</p>'
+      + '<div class="preview">' + r.template.replace(/\n/g, '<br/>') + '</div>'
+      + (r.outliers && r.outliers.length
+          ? '<p class="hint warn">' + r.outliers.length + ' message(s) set aside as probably unrelated (differ by '
+            + r.outliers.map(o => o.differencePct + '%').join(', ') + ') — not imported.</p>' : '')
+      + '<p class="hint">' + r.samples.length + ' message(s) will be imported, one send row each, carrying their original Message-Id '
+      + 'so a follow-up can thread onto them.</p>'
+      + '<div class="row">'
+      + '<button id="btnImportCommit" class="primary">Import this campaign</button>'
+      + '<button id="btnImportCancel">Cancel</button>'
+      + '</div>';
+
+    $('btnImportCommit').onclick = () => commitImportCluster(cluster);
+    $('btnImportCancel').onclick = () => box.classList.add('hidden');
+  } catch (e) {
+    box.innerHTML = '<p class="msg bad">Could not reach the server: ' + esc(e.message) + '</p>';
+  }
+}
+
+async function commitImportCluster(cluster) {
+  const s = session(importUser);
+  if (!confirm('Import "' + (cluster.subject || '(no subject)') + '" as a campaign? '
+    + 'Its replies are already sitting in the inbox — scan for replies right after, '
+    + 'before sending any follow-up, so anyone who already answered is excluded.')) return;
+
+  const btn = $('btnImportCommit');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+  try {
+    const r = await fetch('/api/import', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'commit', user: importUser, pass: s.gPass, mailbox: importMailbox, uids: cluster.uids, source: 'search' }),
+    }).then(x => x.json());
+    if (!r.ok) { say($('importMsg'), r.error || 'Import failed', false); return; }
+
+    say($('importMsg'), 'Imported ' + r.added + ' send(s)'
+      + (r.skipped ? ', ' + r.skipped + ' skipped (duplicates or hidden BCC recipients)' : '')
+      + '. Now scan for replies (Section 5) before sending any follow-up.', true);
+    $('importPreview').classList.add('hidden');
+    campaignCache = [];
+    loadCampaigns();
+  } catch (e) {
+    say($('importMsg'), 'Could not reach the server: ' + e.message, false);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Import this campaign'; }
+  }
+}

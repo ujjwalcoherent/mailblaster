@@ -277,6 +277,43 @@ info@somecompany.com"></textarea>
        campaign is opened, so the list stays the default view. -->
   <div id="campDetail" class="hidden"></div>
 
+  <h3>Find campaigns sent before this tool, or that don't quite match by subject</h3>
+  <p class="hint">Searches the Sent folder of the account below directly — not this app's own
+     history — so a follow-up can thread onto mail sent by hand, in another tool, or under a
+     slightly different subject line each time (e.g. some recipients got
+     <i>"...at India Health 2026"</i>, others just <i>"...at the event"</i>). Matching either the
+     subject or the body text, in a date range, catches both.</p>
+
+  <div class="grid2">
+    <label>Search this account
+      <select id="impUser"><option value="">— choose a saved account —</option></select>
+    </label>
+    <label>Text to search for <small>subject or body — leave blank to browse by date only</small>
+      <input id="impQuery" type="text" placeholder="great meeting at the event"/>
+    </label>
+    <label>From date
+      <input id="impSince" type="date"/>
+    </label>
+    <label>To date <small>defaults to today</small>
+      <input id="impUntil" type="date"/>
+    </label>
+  </div>
+
+  <details class="msection" id="impPasteBox">
+    <summary>Paste one of the emails instead <small>uses its subject/Message-Id to seed the search</small></summary>
+    <div class="msectionbody">
+      <textarea id="impPasted" rows="6" placeholder="Paste the full email (headers and all, if you have them) or just its subject line"></textarea>
+    </div>
+  </details>
+
+  <div class="row">
+    <button id="btnImportScan" class="primary">Search Sent folder</button>
+    <span id="importMsg" class="msg" role="status" aria-live="polite"></span>
+  </div>
+
+  <div id="importResults"></div>
+  <div id="importPreview" class="hidden"></div>
+
   <h3>Sent log</h3>
   <div class="row">
     <button id="btnRefresh" class="primary">Refresh</button>

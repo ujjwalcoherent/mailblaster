@@ -359,6 +359,67 @@ async function importerTests() {
     const r = buildSentSearch({ since, query: 'great meeting' });
     assert.deepStrictEqual(r, { since, or: [{ subject: 'great meeting' }, { body: 'great meeting' }] });
   });
+
+  group('importer — plainTextPart() finds the real text/plain part (not RFC 3501 BODY[TEXT])');
+  const { plainTextPart } = require('./lib/imap');
+  await test('a plain single-part message (no childNodes) is part "1"', () => {
+    assert.deepStrictEqual(plainTextPart({ type: 'text/plain' }), { part: '1' });
+  });
+  await test('multipart/alternative picks the text/plain child, not part "1" blindly', () => {
+    const structure = {
+      type: 'multipart/alternative',
+      childNodes: [
+        { part: '1', type: 'text/plain' },
+        { part: '2', type: 'text/html' },
+      ],
+    };
+    assert.deepStrictEqual(plainTextPart(structure), { part: '1' });
+  });
+  await test('text/plain can be found even when it is not the first child', () => {
+    const structure = {
+      type: 'multipart/alternative',
+      childNodes: [
+        { part: '1', type: 'text/html' },
+        { part: '2', type: 'text/plain' },
+      ],
+    };
+    assert.deepStrictEqual(plainTextPart(structure), { part: '2' });
+  });
+  await test('falls back to text/html (flagged) when there is no text/plain alternative at all', () => {
+    const structure = { type: 'multipart/mixed', childNodes: [{ part: '1', type: 'text/html' }] };
+    assert.deepStrictEqual(plainTextPart(structure), { part: '1', html: true });
+  });
+  await test('nested multipart (e.g. mixed containing an alternative) is walked recursively', () => {
+    const structure = {
+      type: 'multipart/mixed',
+      childNodes: [
+        { type: 'multipart/alternative', childNodes: [
+          { part: '1.1', type: 'text/plain' },
+          { part: '1.2', type: 'text/html' },
+        ] },
+        { part: '2', type: 'application/pdf' },   // an attachment alongside the body
+      ],
+    };
+    assert.deepStrictEqual(plainTextPart(structure), { part: '1.1' });
+  });
+  await test('no usable text part at all (e.g. a structure with only an attachment) returns null, not garbage', () => {
+    const structure = { type: 'multipart/mixed', childNodes: [{ part: '1', type: 'application/pdf' }] };
+    assert.strictEqual(plainTextPart(structure), null);
+  });
+
+  group('importer — textOf() reads the resolved part and strips HTML only when it had to fall back to it');
+  const { textOf } = require('./lib/imap');
+  await test('reads the plain-text part verbatim', () => {
+    const msg = { bodyParts: new Map([['1', Buffer.from('Hello there')]]) };
+    assert.strictEqual(textOf(msg, { part: '1' }), 'Hello there');
+  });
+  await test('strips tags when the resolved part is an HTML fallback', () => {
+    const msg = { bodyParts: new Map([['1', Buffer.from('<p>Hello <b>there</b></p>')]]) };
+    assert.strictEqual(textOf(msg, { part: '1', html: true }), 'Hello there');
+  });
+  await test('no partInfo (nothing usable was found) returns empty rather than throwing', () => {
+    assert.strictEqual(textOf({ bodyParts: new Map() }, null), '');
+  });
 }
 
 /* ================= auth ================= */
