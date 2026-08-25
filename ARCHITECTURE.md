@@ -42,7 +42,7 @@ data               Neon Postgres (hosted) · SQLite (local)
 
 Endpoints stay thin on purpose: every piece of judgement lives in a library
 that can be tested without a network, a mailbox or a database. That is why
-`npm test` runs 96 tests in a second with no secrets.
+`npm test` runs 110 tests in a second with no secrets.
 
 ---
 
@@ -259,9 +259,22 @@ majority shape and set aside first — then reported, never silently dropped.
 
 ## Testing
 
-`npm test` — 96 tests, SQLite by default so it needs no network or secrets.
+`npm test` — 110 tests, SQLite by default so it needs no network or secrets.
 Set `DATABASE_URL` to run the same store tests against Postgres; both must
 pass, and the drivers are expected to behave identically.
+
+**IMAP paths have now been run against a live Gmail mailbox**, not just
+fixtures — real send, real reply, real threaded follow-up, real reply scan,
+real import scan/preview/commit. That live run is exactly what surfaced two
+of this codebase's more serious bugs: the `References`-chain truncation on
+follow-up round 2+, and — more consequentially — that `bodyParts` key
+`'text'` returns raw MIME junk (not the plain-text alternative) for any
+multipart message, degrading every real-world reply classification and
+import preview. Fixtures alone would not have caught either; both were only
+visible against an actual mailbox's actual message shapes. Neither the live
+Gmail account nor its App Password is committed anywhere in this repo — the
+verification was interactive, not automated, and cannot be re-run from
+`npm test`.
 
 The store tests are written as invariants, not implementation checks —
 `THE GUARD: the same person cannot be sent twice in one campaign` fails loudly
@@ -290,7 +303,21 @@ run, not a hypothetical.)
 
 ## Known gaps
 
-- **IMAP paths are untested against a live mailbox.** Every unit is tested with
-  fixtures, but no real Gmail scan has run.
-- **No import UI.** The endpoint works; nothing drives it yet.
-- **Sections 1 and 2 predate the visual rework** in 3, 4 and 5.
+- **Sections 1 and 2 predate the visual rework** in 3, 4 and 5 (Section 1
+  has since been redone as the multi-account list; Section 2's recipient
+  parsing is unchanged).
+- **Thread-linking for imported campaigns is not wired up yet.**
+  `lib/imap.js`'s `scanSent()` now fetches `In-Reply-To`/`References` on
+  Sent-folder messages (the prerequisite), but nothing yet uses those
+  headers to detect that one imported message was itself a reply to another
+  imported message and assign it the correct `followupRound`/
+  `in_reply_to_send` — every imported send is still recorded as round 0.
+  This matters for a campaign that already had manual back-and-forth before
+  this tool existed: a follow-up sent after import would thread onto the
+  very first message rather than the latest point in the conversation.
+- **No LLM-assisted fuzzy campaign matching.** The plan for this (matching
+  "...at India Health 2026" against "...at the event" via DeepSeek when
+  exact-string clustering misses) has not been built — the deterministic
+  path (date range + subject-or-body text search, described above) covers
+  the common case; the harder "what if neither the text nor the timing line
+  up" case is unhandled.
