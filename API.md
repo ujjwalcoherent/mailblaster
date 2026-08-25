@@ -415,7 +415,35 @@ Two things worth knowing before relying on this:
 | [`lib/importer.js`](lib/importer.js) | Recognising past campaigns; rebuilding their template. |
 | [`lib/log.js`](lib/log.js) | Structured logging with credential redaction. |
 | [`lib/util.js`](lib/util.js) | Salutation parsing, merge-tag rendering, SMTP transport. |
+| [`lib/llm.js`](lib/llm.js) | Optional DeepSeek-assisted fuzzy campaign matching, with exact per-call cost logging. |
 
-Run `npm test` for the suite (74 tests). It uses SQLite by default so it needs
+### `lib/llm.js` — optional, and never authoritative
+
+A last resort for the campaigns `lib/importer.js`'s exact-string clustering
+and `/api/import`'s subject-or-body search both miss — e.g. one recipient's
+subject carried an event name ("...at India Health 2026") and another's
+didn't ("...at the event"). With no `DEEPSEEK_API_KEY` set, every function
+in this file is a no-op returning `null`, and the deterministic clustering
+result is the only thing that ran — nothing in the app's core behaviour
+depends on this file.
+
+When a key IS set, `/api/import`'s `scan` action runs a bounded, capped pass
+(at most 20 pairwise comparisons, only against clusters already too
+small/low-confidence for the deterministic path) and attaches
+`mergeSuggestions` to affected clusters in the response — a suggestion the
+user reads and acts on themselves, **never an automatic merge**.
+
+Every call's exact cost is logged (`log.info('llm_usage', {...})`), computed
+from the response's own `usage` object (`prompt_cache_hit_tokens` /
+`prompt_cache_miss_tokens` / `completion_tokens`) against DeepSeek's
+published per-token pricing, doubled during its own peak hours (01:00-04:00
+and 06:00-10:00 UTC, Monday-Friday) — not assumed or estimated from token
+counts alone, since a cache hit is roughly 31x cheaper than a cache miss on
+`deepseek-v4-flash` and getting that wrong would make any cost estimate
+meaningless.
+
+Run `npm test` for the suite (130 tests). It uses SQLite by default so it needs
 no network or secrets; set `DATABASE_URL` to run the same store tests against
-Postgres.
+Postgres. The `lib/llm.js` tests check the cost-calculation math against
+DeepSeek's published pricing by hand arithmetic — no network call, no key
+required.

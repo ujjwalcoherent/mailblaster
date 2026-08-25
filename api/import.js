@@ -29,6 +29,7 @@ const { cluster, parsePasted, rebuildTemplate, linkThreadPositions } = require('
 const { describe, httpFor, classify } = require('../lib/errors');
 const log = require('../lib/log');
 const auth = require('../lib/auth');
+const llm = require('../lib/llm');
 
 const BUDGET_MS = 40000;
 
@@ -108,6 +109,39 @@ async function scan(b, res) {
   clusters.forEach(c => {
     c.alreadyImported = c.messageIds.filter(id => known.has(id)).length;
   });
+
+  /* Last resort, only for what's LEFT after exact-string + timing
+     clustering: "Great meeting at the event India Health 2026" and "Great
+     meeting at the event" share no exact normalised subject, so they land
+     in different clusters above. If DEEPSEEK_API_KEY isn't configured this
+     is a complete no-op (llm.available() is false) -- the deterministic
+     result above is unchanged and authoritative either way. Every
+     suggestion is attached to the clusters as `mergeSuggestions`, for the
+     user to review and confirm; nothing here merges clusters automatically. */
+  if (llm.available() && clusters.length > 1 && clusters.length <= 40) {
+    const smallOrLow = clusters
+      .map((c, i) => ({ c, i }))
+      .filter(({ c }) => c.confidence !== 'high' || c.recipientCount <= 2);
+    const pairs = [];
+    for (let a = 0; a < smallOrLow.length; a++) {
+      for (let bIdx = a + 1; bIdx < smallOrLow.length; bIdx++) {
+        pairs.push([smallOrLow[a], smallOrLow[bIdx]]);
+      }
+    }
+    // Bounded, not "every pair in the scan": this only ever runs against
+    // clusters already too small/uncertain for the deterministic path, and
+    // is capped regardless so a large scan can't run away with API cost.
+    const capped = pairs.slice(0, 20);
+    for (const [{ c: ca, i: ia }, { c: cb, i: ib }] of capped) {
+      const suggestion = await llm.suggestSameCampaign(ca.subject, cb.subject);
+      if (suggestion && suggestion.same) {
+        clusters[ia].mergeSuggestions = clusters[ia].mergeSuggestions || [];
+        clusters[ia].mergeSuggestions.push({ withKey: cb.key, subject: cb.subject, reason: suggestion.reason });
+        clusters[ib].mergeSuggestions = clusters[ib].mergeSuggestions || [];
+        clusters[ib].mergeSuggestions.push({ withKey: ca.key, subject: ca.subject, reason: suggestion.reason });
+      }
+    }
+  }
 
   log.info('import_scan', {
     mailbox: result.mailbox, examined: result.examined,

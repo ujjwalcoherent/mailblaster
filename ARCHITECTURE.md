@@ -327,12 +327,12 @@ run, not a hypothetical.)
 
 ## Known gaps
 
-- **Sections 1 and 2 predate the visual rework** in 3, 4 and 5 (Section 1
-  has since been redone as the multi-account list; Section 2's recipient
-  parsing is unchanged).
-- **No LLM-assisted fuzzy campaign matching.** The plan for this (matching
-  "...at India Health 2026" against "...at the event" via DeepSeek when
-  exact-string clustering misses) has not been built — the deterministic
-  path (date range + subject-or-body text search, described above) covers
-  the common case; the harder "what if neither the text nor the timing line
-  up" case is unhandled.
+- **Section 2 predates the visual rework** in 3, 4 and 5 (its recipient
+  parsing is unchanged; Section 1 has since been redone as the multi-account
+  list).
+- **The DeepSeek fuzzy-matching layer (`lib/llm.js`) has not been exercised
+  live.** It's fully built and tested — cost math checked against DeepSeek's
+  published pricing, the whole module confirmed to no-op safely with no key
+  — but no `DEEPSEEK_API_KEY` was available in this environment to make an
+  actual `suggestSameCampaign()` call and confirm the logged cost against a
+  real response's `usage` object.

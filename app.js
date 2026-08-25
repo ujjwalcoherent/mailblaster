@@ -1937,7 +1937,16 @@ function renderImportClusters() {
     + '</tr></thead><tbody>'
     + importClusters.map((c, i) => '<tr class="' + (c.confidence === 'low' ? 'lowconf' : '') + '">'
       + '<td><span class="badge ' + (c.confidence === 'high' ? 'sent' : c.confidence === 'medium' ? 'g' : 'w') + '">' + esc(c.confidence) + '</span></td>'
-      + '<td>' + esc(c.subject || '(no subject)') + (c.alreadyImported ? ' <span class="badge p">already imported</span>' : '') + '</td>'
+      + '<td>' + esc(c.subject || '(no subject)') + (c.alreadyImported ? ' <span class="badge p">already imported</span>' : '')
+      /* Never merged automatically — only ever a suggestion the user reads
+         and acts on themselves (open both previews, decide). This is the
+         DeepSeek-assisted last resort for clusters the deterministic
+         subject/timing match above couldn't tell apart, e.g. one recipient
+         got "...at India Health 2026" and another just "...at the event". */
+      + (c.mergeSuggestions && c.mergeSuggestions.length
+          ? '<br/><span class="hint">💡 might be the same campaign as: '
+            + c.mergeSuggestions.map(s => '"' + esc(s.subject) + '" (' + esc(s.reason) + ')').join('; ') + '</span>'
+          : '') + '</td>'
       + '<td>' + c.recipientCount + '</td>'
       + '<td>' + esc(humanSpan(c.spanMs)) + '</td>'
       + '<td class="hint">' + esc(c.reason) + '</td>'

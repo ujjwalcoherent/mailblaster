@@ -711,6 +711,99 @@ async function storeTests() {
   });
 }
 
+/* ================= llm: DeepSeek cost calculation (no network) ================= */
+
+/**
+ * lib/llm.js is entirely optional (the fuzzy campaign-matching assist for
+ * clusters exact-string search misses) and makes no live call without
+ * DEEPSEEK_API_KEY set. What IS tested here without any network access or
+ * key is the cost math itself: peak-hour detection and the usage->USD
+ * calculation, checked against DeepSeek's own published pricing
+ * (api-docs.deepseek.com/quick_start/pricing, confirmed August 2026) by hand
+ * arithmetic, not just internal consistency.
+ */
+async function llmTests() {
+  const llm = require('./lib/llm');
+
+  group('llm — peak-hour detection (01:00-04:00 and 06:00-10:00 UTC, Mon-Fri)');
+  await test('a weekday inside the first peak window (02:00 UTC) is peak', () => {
+    assert.strictEqual(llm.isPeakHour(new Date('2026-08-24T02:00:00Z')), true);   // a Monday
+  });
+  await test('a weekday inside the second peak window (07:00 UTC) is peak', () => {
+    assert.strictEqual(llm.isPeakHour(new Date('2026-08-24T07:00:00Z')), true);
+  });
+  await test('a weekday in the gap between the two peak windows (05:00 UTC) is off-peak', () => {
+    assert.strictEqual(llm.isPeakHour(new Date('2026-08-24T05:00:00Z')), false);
+  });
+  await test('midday on a weekday is off-peak', () => {
+    assert.strictEqual(llm.isPeakHour(new Date('2026-08-24T12:00:00Z')), false);
+  });
+  await test('the same hour-of-day on a Saturday is off-peak (peak is Mon-Fri only)', () => {
+    assert.strictEqual(llm.isPeakHour(new Date('2026-08-29T02:00:00Z')), false);   // a Saturday
+  });
+
+  group('llm — costOf() matches DeepSeek\'s published per-token pricing exactly');
+  await test('off-peak deepseek-v4-flash: cache-hit + cache-miss + output priced separately', () => {
+    // 900 cache-hit @ $0.007/M + 100 cache-miss @ $0.22/M + 50 output @ $0.66/M
+    const usage = { prompt_tokens: 1000, prompt_cache_hit_tokens: 900, prompt_cache_miss_tokens: 100, completion_tokens: 50 };
+    const r = llm.costOf(usage, { at: new Date('2026-08-24T12:00:00Z') });   // off-peak
+    const expected = (900 / 1e6) * 0.007 + (100 / 1e6) * 0.22 + (50 / 1e6) * 0.66;
+    assert.ok(Math.abs(r.usd - expected) < 1e-12, 'expected ' + expected + ' got ' + r.usd);
+    assert.strictEqual(r.peak, false);
+  });
+  await test('peak hours exactly double the off-peak rate', () => {
+    const usage = { prompt_tokens: 1000, prompt_cache_hit_tokens: 1000, prompt_cache_miss_tokens: 0, completion_tokens: 0 };
+    const offPeak = llm.costOf(usage, { at: new Date('2026-08-24T12:00:00Z') });
+    const peak = llm.costOf(usage, { at: new Date('2026-08-24T02:00:00Z') });
+    assert.ok(Math.abs(peak.usd - offPeak.usd * 2) < 1e-12, 'peak must be exactly 2x off-peak');
+  });
+  await test('a cache-hit token is roughly 31x cheaper than a cache-miss token (deepseek-v4-flash)', () => {
+    const hitOnly = llm.costOf({ prompt_cache_hit_tokens: 1e6, prompt_cache_miss_tokens: 0, completion_tokens: 0 },
+      { at: new Date('2026-08-24T12:00:00Z') });
+    const missOnly = llm.costOf({ prompt_cache_hit_tokens: 0, prompt_cache_miss_tokens: 1e6, completion_tokens: 0 },
+      { at: new Date('2026-08-24T12:00:00Z') });
+    const ratio = missOnly.usd / hitOnly.usd;
+    assert.ok(ratio > 30 && ratio < 32, 'expected ~31x, got ' + ratio + 'x');
+  });
+  await test('deepseek-v4-pro is priced at its own (higher) table, not flash\'s', () => {
+    const usage = { prompt_cache_hit_tokens: 1e6, prompt_cache_miss_tokens: 0, completion_tokens: 0 };
+    const flash = llm.costOf(usage, { model: 'deepseek-v4-flash', at: new Date('2026-08-24T12:00:00Z') });
+    const pro = llm.costOf(usage, { model: 'deepseek-v4-pro', at: new Date('2026-08-24T12:00:00Z') });
+    assert.ok(pro.usd > flash.usd, 'pro must cost more than flash for the same usage');
+  });
+
+  group('llm — the whole module is a safe no-op with no API key configured');
+  await test('available() is false with no key in the environment', () => {
+    const hadKey = process.env.DEEPSEEK_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+    try {
+      assert.strictEqual(llm.available(), false);
+    } finally {
+      if (hadKey) process.env.DEEPSEEK_API_KEY = hadKey;
+    }
+  });
+  await test('complete() returns null rather than throwing with no key', async () => {
+    const hadKey = process.env.DEEPSEEK_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+    try {
+      const r = await llm.complete([{ role: 'user', content: 'hi' }]);
+      assert.strictEqual(r, null);
+    } finally {
+      if (hadKey) process.env.DEEPSEEK_API_KEY = hadKey;
+    }
+  });
+  await test('suggestSameCampaign() returns null rather than throwing with no key', async () => {
+    const hadKey = process.env.DEEPSEEK_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+    try {
+      const r = await llm.suggestSameCampaign('Great meeting at the event India Health 2026', 'Great meeting at the event');
+      assert.strictEqual(r, null);
+    } finally {
+      if (hadKey) process.env.DEEPSEEK_API_KEY = hadKey;
+    }
+  });
+}
+
 /* ================= frontend: it must actually load in a real DOM ================= */
 
 /**
@@ -820,6 +913,7 @@ async function frontendTests() {
   await importerTests();
   await authTests();
   await storeTests();
+  await llmTests();
   await frontendLoadTests();
   await frontendTests();
 
