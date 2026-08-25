@@ -134,6 +134,8 @@ tr.lowconf td{background:#fff4ec}
 .acctstatus.idle{background:#eef0f5;color:#59607a}
 .acctstatus.sending{background:#e8f0ff;color:#1a4fa0}
 .acctstatus.error{background:#fdeaea;color:#a12626}
+.acctprogress{width:70px;height:6px;background:#e9edf9;border-radius:99px;overflow:hidden;display:inline-block;vertical-align:middle}
+.acctprogress i{display:block;height:100%;background:var(--brand);transition:width .2s}
 
 /* ---------- campaign + reply tables ---------- */
 .badge.running { background: #e8f0ff; color: #1a4fa0; }

@@ -27,6 +27,7 @@ function newSession(email) {
     sending: false, stopRequested: false,
     lastError: null,
     sentToday: null,           // filled in by refreshQuota()
+    progress: null,            // { done, total } while sending, so the account card can show "sending 7/50"
   };
 }
 
@@ -274,12 +275,21 @@ function renderAccountList() {
     const s = session(email);
     const editing = email === activeAccountEmail;
     const status = s.sending ? 'sending' : (s.lastError ? 'error' : 'idle');
-    const statusLabel = s.sending ? 'sending…' : (s.lastError ? 'error' : 'idle');
+    /* "sending 7/50" while a campaign or follow-up is actually in flight for
+       THIS account, not just a static "sending…" — this is what lets
+       several concurrently-sending accounts be told apart at a glance. */
+    const statusLabel = s.sending
+      ? (s.progress ? 'sending ' + s.progress.done + '/' + s.progress.total : 'sending…')
+      : (s.lastError ? 'error' : 'idle');
+    const progressBar = s.sending && s.progress
+      ? '<span class="acctprogress"><i style="width:' + Math.round(s.progress.done / s.progress.total * 100) + '%"></i></span>'
+      : '';
     const quota = s.sentToday && typeof s.sentToday.sent === 'number'
       ? quotaHtml(s.sentToday) : '';
     return '<div class="accountcard' + (editing ? ' editing' : '') + '" data-email="' + esc(email) + '">'
       + '<span class="addr">' + esc(email) + '</span>'
       + '<span class="acctstatus ' + status + '">' + esc(statusLabel) + '</span>'
+      + progressBar
       + quota
       + '<button class="edit" data-email="' + esc(email) + '">Edit</button>'
       + '<button class="danger remove" data-email="' + esc(email) + '">Remove</button>'
@@ -939,6 +949,12 @@ $('composeBtnSend').onclick = async () => {
     $('composeBar').style.width = ((i + 1) / total * 100) + '%';
     $('composeProgressText').textContent = (i + 1) + ' / ' + total + ' · ' + sent + ' delivered · ' + failed + ' failed'
       + (entry.status === 'failed' ? ' · last error: ' + entry.error : '');
+    /* The account card's status chip shows "sending 7/50" live, not just
+       "sending…" — this is what lets several concurrently-sending accounts
+       be told apart from a glance at Section 1 without opening either mail
+       window. */
+    acctSession.progress = { done: i + 1, total };
+    renderAccountList();
     if (delay && i < total - 1) await new Promise(s => setTimeout(s, delay));
   }
 
@@ -952,6 +968,7 @@ $('composeBtnSend').onclick = async () => {
   }
 
   acctSession.sending = false;
+  acctSession.progress = null;
   $('composeBtnStop').classList.add('hidden');
   say($('composeMsg'),
     (stopped ? '■ Stopped — ' : '✓ Finished — ') + sent + ' delivered, ' + failed + ' failed.'
@@ -1066,7 +1083,16 @@ async function loadCampaigns() {
    A mailbox scan takes seconds and a hosted function is killed at 60s, so the
    server returns a cursor when its budget runs out and this loop continues
    from there. The button reports progress throughout rather than sitting
-   inert, because a silent multi-second wait reads as a broken control. */
+   inert, because a silent multi-second wait reads as a broken control.
+
+   Deliberately still one page-wide flag, unlike sending: Section 5 is one
+   shared scan button and one shared result list, not one instance per
+   account the way Section 3/5's mail windows are — so there is only ever
+   one scan control on screen regardless of how many accounts are saved.
+   Making this per-account would block a second scan from a DIFFERENT
+   account without actually letting two scans run through this one shared
+   UI at once; the real fix is duplicating Section 5 per account (like
+   compose/follow-up already are), which is a larger change than this flag. */
 let scanning = false;
 
 async function scanReplies() {
@@ -1233,10 +1259,28 @@ if ($('fuCampaign')) $('fuCampaign').addEventListener('change', loadFollowupAudi
 
 /* Send the follow-up as a reply in the original thread. */
 async function sendFollowup() {
-  const c = creds();
-  if (!c.gUser || !c.gPass) return say($('fuMsg'), 'Add your Gmail credentials in Section 1.', false);
   const campaignId = $('fuCampaign').value;
   if (!campaignId) return say($('fuMsg'), 'Choose a campaign to follow up on.', false);
+
+  /* The follow-up must be sent — and authenticated — as the account that
+     OWNS this campaign, not whichever account happens to be active in
+     Section 1. campaignCache is the combined cross-account list (Section 4
+     defaults to showing every saved account together), so the campaign
+     picker here can easily list a campaign belonging to a different
+     account than the one currently showing in Section 1. Using the wrong
+     account's credentials wouldn't silently misfire — /api/followup checks
+     `owner` server-side and would report "Campaign not found" for a
+     mismatch — but that's a confusing failure to hit by accident when the
+     right account is one click away. */
+  const parentCampaign = campaignCache.find(x => String(x.id) === String(campaignId));
+  const owner = parentCampaign ? String(parentCampaign.from || '').trim().toLowerCase() : activeAccountEmail;
+  if (!owner) return say($('fuMsg'), 'Could not determine which account owns this campaign.', false);
+  const s = session(owner);
+  if (!s.gPass) {
+    return say($('fuMsg'), 'No saved App Password for ' + owner + '. Open that account in Section 1 and Verify first.', false);
+  }
+  if (owner !== activeAccountEmail) selectAccount(owner);
+  const c = { gUser: owner, gPass: s.gPass, fromName: s.fromName, replyTo: s.replyTo, smtpPort: s.smtpPort };
 
   const audience = selectedAudience();
   if (!audience.length) return say($('fuMsg'), 'Nobody matches the chosen audience.', false);
@@ -1356,11 +1400,14 @@ async function runSendLoop(opts) {
       + (failed ? ' \u00b7 ' + failed + ' failed' : '')
       + (skipped ? ' \u00b7 ' + skipped + ' already sent' : '')
       + (!res.ok && res.error ? ' \u00b7 ' + res.error : '');
+    acctSession.progress = { done: i + 1, total };
+    renderAccountList();
 
     if (delay && i < total - 1) await new Promise(function (r) { setTimeout(r, delay); });
   }
 
   acctSession.sending = false;
+  acctSession.progress = null;
   if ($(p + 'BtnStop')) $(p + 'BtnStop').classList.add('hidden');
   $(p + 'BtnSend').disabled = false;
   say(msg, (stopped ? '\u25a0 Stopped \u2014 ' : '\u2713 Finished \u2014 ') + sent + ' delivered'
@@ -1376,10 +1423,24 @@ async function runSendLoop(opts) {
    The send loop dies with the tab, so where a run got to is rebuilt from the
    database rather than trusted to the browser. */
 async function resumeCampaign(c) {
-  const creds_ = creds();
-  if (!creds_.gUser || !creds_.gPass) {
-    return alert('Add your Gmail credentials in Section 1 before resuming.');
+  /* This campaign's OWN account, not whichever one happens to be active in
+     Section 1 right now. With the combined cross-account dashboard, the
+     campaign being resumed and the account currently showing in Section 1
+     can easily be two different accounts — using creds() here would either
+     resume with the wrong account's credentials or fail outright if no
+     account happens to be active at all. */
+  const owner = String(c.from || '').trim().toLowerCase();
+  if (!owner) return alert('This campaign has no recorded sending account — cannot resume it.');
+  const s = session(owner);
+  if (!s.gPass) {
+    return alert('No saved App Password for ' + owner + '. Open that account in Section 1, '
+      + 'enter its App Password and Verify, then resume again.');
   }
+  // Switch the active account so the compose window (which this loop
+  // renders progress into) reflects the account actually sending.
+  selectAccount(owner);
+  const creds_ = { gUser: owner, gPass: s.gPass, fromName: s.fromName, replyTo: s.replyTo, smtpPort: s.smtpPort };
+
   let state;
   try {
     state = await fetch('/api/resume?campaign=' + encodeURIComponent(c.id)).then(x => x.json());
