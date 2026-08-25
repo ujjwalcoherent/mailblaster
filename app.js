@@ -665,9 +665,25 @@ $('composeBtnSend').onclick = async () => {
   }
   if (!confirm('Send to ' + recipients.length + ' recipient(s)?')) return;
 
+  /* Start a real campaign row before sending anything. Without this, every
+     send in this loop would persist with campaign_id = NULL: Section 4 would
+     never list the run, and store.followupCandidates() — which requires a
+     real campaignId — could never find anyone to follow up with afterwards. */
+  let campaignId = null;
+  try {
+    const started = await fetch('/api/campaigns', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'start', from: c.gUser, subject: $('composeSubject').value, total: recipients.length,
+      }),
+    }).then(x => x.json());
+    if (started.ok) campaignId = started.campaignId;
+  } catch (e) { /* history unavailable (no DB) — sending still works, just unlogged as a campaign */ }
+
   const attachments = await Promise.all(files.map(readFileB64));
   const base = {
     user: c.gUser, pass: c.gPass, port: c.smtpPort, fromName: c.fromName, replyTo: c.replyTo,
+    campaignId,
     subject: $('composeSubject').value,
     greeting: $('composeGreeting').value,
     bodyHtml: bodyHtml(),
@@ -722,6 +738,15 @@ $('composeBtnSend').onclick = async () => {
     $('composeProgressText').textContent = (i + 1) + ' / ' + total + ' · ' + sent + ' delivered · ' + failed + ' failed'
       + (entry.status === 'failed' ? ' · last error: ' + entry.error : '');
     if (delay && i < total - 1) await new Promise(s => setTimeout(s, delay));
+  }
+
+  if (campaignId) {
+    try {
+      await fetch('/api/campaigns', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'finish', campaignId, status: stopped ? 'stopped' : 'done' }),
+      });
+    } catch (e) { /* not fatal — the campaign row just stays 'running' */ }
   }
 
   sending = false;
@@ -1068,11 +1093,15 @@ async function runSendLoop(opts) {
       subject: opts.threaded ? ('Re: ' + (person.subject || '')) : base.subject,
     }, base);
 
-    /* Thread onto the message being answered: Gmail nests the reply only when
-       both headers carry the original Message-Id. */
+    /* Thread onto the message being answered. In-Reply-To is just the
+       immediate parent; References must carry the WHOLE ancestor chain (RFC
+       5322 3.6.4) or a 3rd-round follow-up can lose earlier ancestors and
+       thread incorrectly in stricter clients. person.references already
+       comes pre-accumulated from store.followupCandidates(). */
     if (opts.threaded && person.messageId) {
       body.inReplyTo = person.messageId;
-      body.references = [person.messageId];
+      body.references = (person.references && person.references.length)
+        ? person.references : [person.messageId];
     }
 
     let res;

@@ -87,6 +87,14 @@ ALTER TABLE recipients ADD COLUMN IF NOT EXISTS contact_count  INT NOT NULL DEFA
 ALTER TABLE sends      ADD COLUMN IF NOT EXISTS in_reply_to_send BIGINT;
 ALTER TABLE sends      ADD COLUMN IF NOT EXISTS followup_round   INT NOT NULL DEFAULT 0;
 
+-- RFC 5322 3.6.4: References must carry the WHOLE ancestor chain (every prior
+-- Message-Id in the thread), not just the immediate parent — In-Reply-To alone
+-- covers the immediate parent. Without this, a 3rd-round follow-up could lose
+-- older ancestors and thread incorrectly in stricter mail clients. Stored as a
+-- JSON array of Message-Ids so it can just be appended to and passed straight
+-- through to nodemailer's `references` option.
+ALTER TABLE sends      ADD COLUMN IF NOT EXISTS references_json  TEXT;
+
 -- Replies carry their own received time and a snippet so the list can be read
 -- without refetching the mailbox.
 ALTER TABLE replies    ADD COLUMN IF NOT EXISTS body TEXT;

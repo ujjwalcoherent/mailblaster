@@ -85,17 +85,22 @@ module.exports = log.wrap('send', auth.require(async function handler(req, res) 
     status: 'failed',
     error: null,
     body: html,          // exactly what this person received, after merge tags
+    /* Stored as the array the caller sent (RFC 5322 3.6.4's full ancestor
+       chain), so the NEXT follow-up round can read it back via
+       store.followupCandidates() and keep accumulating rather than
+       collapsing to just the immediate parent. */
+    references: Array.isArray(b.references) ? b.references : (b.references ? [b.references] : []),
   };
 
   const t = gmailTransport(nodemailer, b.user, b.pass, b.port);
 
   /* A follow-up is a reply in the ORIGINAL thread, not a new message: Gmail
      nests it under the first email only when both In-Reply-To and References
-     carry the Message-Id of what it answers. */
+     carry the Message-Id of what it answers. The wire header is a
+     space-joined string; what's persisted (entry.references, above) stays an
+     array so it round-trips through JSON cleanly. */
   const inReplyTo = b.inReplyTo || undefined;
-  const references = b.references && b.references.length
-    ? (Array.isArray(b.references) ? b.references.join(' ') : String(b.references))
-    : inReplyTo;
+  const references = entry.references.length ? entry.references.join(' ') : inReplyTo;
 
   try {
     const info = await t.sendMail({

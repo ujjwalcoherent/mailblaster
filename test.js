@@ -500,6 +500,40 @@ async function storeTests() {
     const rows = await store.list(50, { campaignId });
     assert.strictEqual(rows.length, 2);
   });
+
+  group('store — References accumulates the whole ancestor chain (RFC 5322 3.6.4)');
+  await test('round 1 follow-up candidate has no prior references, just the original message-id', async () => {
+    const camp1 = await store.startCampaign({ name: 'Thread test', subject: 'Hi', from: 'me@gmail.com', total: 1 });
+    await store.insert({ campaignId: camp1, time: new Date().toISOString(), from: 'me@gmail.com',
+      to: 'carol@test.com', name: 'Carol', subject: 'Hi Carol', status: 'sent',
+      body: '<p>1</p>', messageId: '<round0@mail>' });
+    const candidates = await store.followupCandidates(camp1, { cap: false });
+    const carol = candidates.find(c => c.email === 'carol@test.com');
+    assert.deepStrictEqual(carol.references, ['<round0@mail>'],
+      'first follow-up must reference exactly the original message');
+  });
+  await test('round 2 follow-up candidate carries round 0 AND round 1 in References', async () => {
+    const camp1 = await store.startCampaign({ name: 'Thread test 2', subject: 'Hi', from: 'me@gmail.com', total: 1 });
+    await store.insert({ campaignId: camp1, time: new Date().toISOString(), from: 'me@gmail.com',
+      to: 'dave@test.com', name: 'Dave', subject: 'Hi Dave', status: 'sent',
+      body: '<p>1</p>', messageId: '<round0-dave@mail>' });
+    const round1Candidates = await store.followupCandidates(camp1, { cap: false });
+    const dave1 = round1Candidates.find(c => c.email === 'dave@test.com');
+
+    // Simulate what app.js + api/send.js do: send round 1 with the accumulated
+    // references, then persist that send with them.
+    const camp2 = await store.startCampaign({ name: 'Thread test 2 · follow-up 1', subject: 'Re: Hi',
+      from: 'me@gmail.com', total: 1, parentId: camp1, followupRound: 1 });
+    await store.insert({ campaignId: camp2, time: new Date().toISOString(), from: 'me@gmail.com',
+      to: 'dave@test.com', name: 'Dave', subject: 'Re: Hi Dave', status: 'sent', followupRound: 1,
+      body: '<p>2</p>', messageId: '<round1-dave@mail>', references: dave1.references });
+
+    const round2Candidates = await store.followupCandidates(camp2, { cap: false });
+    const dave2 = round2Candidates.find(c => c.email === 'dave@test.com');
+    assert.deepStrictEqual(dave2.references, ['<round0-dave@mail>', '<round1-dave@mail>'],
+      'round 2 must carry BOTH ancestors, not just the immediately preceding message');
+  });
+
   await test('clear() empties history but keeps known addresses', async () => {
     await store.clear();
     assert.strictEqual((await store.campaigns('me@gmail.com')).length, 0);

@@ -187,8 +187,16 @@ address is persisted, as the key that scopes history to an account.
 This is why reply scanning is a button rather than a cron job: a schedule would
 require storing the password server-side permanently. (Vercel's Hobby plan also
 caps cron at one run per day, so hourly polling is not available free anyway.)
-The compensating design is an automatic scan at campaign start — fresh
-suppression at the exact moment correctness matters.
+
+The scan is manual, on purpose, not automatic at campaign start: an earlier
+draft of this doc claimed campaign start triggered a scan, but that was never
+implemented, and — on reflection — shouldn't be implicit. Auto-scanning would
+add a network round trip (and a new failure mode: what happens if the scan
+itself times out?) before every send, silently, which cuts against the rest of
+this codebase's philosophy of making cost and risk visible rather than hidden.
+The compensating design is instead a clearly-labelled "Scan for replies" button
+placed right next to "Send follow-up," so refreshing suppression immediately
+before sending is one deliberate click away, not a hidden precondition.
 
 ---
 
