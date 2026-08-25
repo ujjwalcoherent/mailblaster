@@ -237,15 +237,24 @@ This is why reply scanning is a button rather than a cron job: a schedule would
 require storing the password server-side permanently. (Vercel's Hobby plan also
 caps cron at one run per day, so hourly polling is not available free anyway.)
 
-The scan is manual, on purpose, not automatic at campaign start: an earlier
-draft of this doc claimed campaign start triggered a scan, but that was never
-implemented, and — on reflection — shouldn't be implicit. Auto-scanning would
-add a network round trip (and a new failure mode: what happens if the scan
-itself times out?) before every send, silently, which cuts against the rest of
-this codebase's philosophy of making cost and risk visible rather than hidden.
-The compensating design is instead a clearly-labelled "Scan for replies" button
-placed right next to "Send follow-up," so refreshing suppression immediately
-before sending is one deliberate click away, not a hidden precondition.
+The scan defaults to manual: an earlier draft of this doc claimed campaign
+start triggered a scan, but that was never implemented. A "Scan for replies"
+button sits right next to "Send follow-up," so refreshing suppression
+immediately before sending is one deliberate click away rather than a
+hidden precondition — that stays the default because auto-scanning adds a
+real network round trip (and its own failure mode: what happens if the scan
+itself times out?) before every send, and doing that silently would cut
+against this codebase's habit of making cost and risk visible rather than
+hidden.
+
+An account CAN opt into it anyway — a checkbox in Section 1, off by
+default, per account: "scan this account's inbox for replies before every
+send." Both paths existing side by side, rather than one replacing the
+other, is deliberate: the manual button for whoever wants scanning to stay
+a visible, deliberate cost, and the opt-in toggle for whoever would rather
+trade that round trip for fresher suppression on an account they trust to
+run unattended for a while. Turning it on is a choice made once, in plain
+sight, not a default anyone has to discover they're paying for.
 
 ---
 

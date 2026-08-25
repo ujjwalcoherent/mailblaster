@@ -28,6 +28,12 @@ function newSession(email) {
     lastError: null,
     sentToday: null,           // filled in by refreshQuota()
     progress: null,            // { done, total } while sending, so the account card can show "sending 7/50"
+    /* Off by default — see the checkbox's own label in Section 1 for why:
+       this trades a real network round-trip (and its own failure mode)
+       before every send for fresher suppression. "Scan for replies" in
+       Section 5 does the same thing on demand for anyone who'd rather not
+       pay that cost automatically. */
+    autoScanOnSend: false,
   };
 }
 
@@ -240,6 +246,7 @@ function fillAccountForm(email) {
   $('fromName').value = s.fromName || '';
   $('replyTo').value = s.replyTo || '';
   $('smtpPort').value = s.smtpPort || '587';
+  if ($('autoScanOnSend')) $('autoScanOnSend').checked = !!s.autoScanOnSend;
   $('editingAccountLabel').textContent = email || '— new account —';
 }
 
@@ -247,17 +254,18 @@ function persist() {
   const c = creds();
   if (!c.gUser) return;
   const s = session(c.gUser);
-  Object.assign(s, { gPass: c.gPass, fromName: c.fromName, replyTo: c.replyTo, smtpPort: c.smtpPort });
+  const autoScanOnSend = !!($('autoScanOnSend') && $('autoScanOnSend').checked);
+  Object.assign(s, { gPass: c.gPass, fromName: c.fromName, replyTo: c.replyTo, smtpPort: c.smtpPort, autoScanOnSend });
   activeAccountEmail = c.gUser;
   if ($('remember').checked) {
-    saveAccountCreds(c.gUser, c);
+    saveAccountCreds(c.gUser, Object.assign({}, c, { autoScanOnSend }));
     const list = savedAccountList();
     if (!list.includes(c.gUser)) { list.push(c.gUser); saveAccountList(list); }
   }
   renderAccountList();
   refreshComposeHeader();
 }
-['gUser', 'gPass', 'fromName', 'replyTo', 'smtpPort', 'remember'].forEach(id => $(id).addEventListener('change', persist));
+['gUser', 'gPass', 'fromName', 'replyTo', 'smtpPort', 'remember', 'autoScanOnSend'].forEach(id => $(id).addEventListener('change', persist));
 
 /* Render the saved-account cards. Each shows a live status chip (idle /
    sending N/M / error) read straight from that account's own session, so
@@ -367,7 +375,8 @@ if ($('btnAddAccount')) $('btnAddAccount').onclick = () => {
   list.forEach(email => {
     const c = loadAccountCreds(email);
     const s = session(email);
-    Object.assign(s, { gPass: c.gPass || '', fromName: c.fromName || '', replyTo: c.replyTo || '', smtpPort: c.smtpPort || '587' });
+    Object.assign(s, { gPass: c.gPass || '', fromName: c.fromName || '', replyTo: c.replyTo || '',
+      smtpPort: c.smtpPort || '587', autoScanOnSend: !!c.autoScanOnSend });
   });
   if (list.length) selectAccount(list[0]);
   else renderAccountList();
@@ -921,8 +930,17 @@ $('composeBtnSend').onclick = async () => {
   $('composeBtnSend').disabled = true;
   $('composeBtnStop').classList.remove('hidden');
   $('composeProgressWrap').classList.remove('hidden');
-  say($('composeMsg'), 'Sending… keep this tab open — closing or reloading it stops the campaign.', true);
   renderAccountList();
+
+  /* Opt-in, off by default (Section 1's checkbox) — the account this
+     campaign is sending FROM, checked at send time, not whichever account
+     is active on screen. Suppression from a stale reply is checked
+     server-side regardless; this only makes it more likely to be fresh. */
+  if (acctSession.autoScanOnSend) {
+    say($('composeMsg'), 'Scanning ' + c.gUser + ' for replies first (enabled in Section 1)…', true);
+    await scanRepliesFor(c.gUser, 30);
+  }
+  say($('composeMsg'), 'Sending… keep this tab open — closing or reloading it stops the campaign.', true);
 
   let stopped = false;
   for (let i = 0; i < total; i++) {
@@ -1098,6 +1116,33 @@ async function loadCampaigns() {
    UI at once; the real fix is duplicating Section 5 per account (like
    compose/follow-up already are), which is a larger change than this flag. */
 let scanning = false;
+
+/**
+ * The same reply scan Section 5's button runs, but headless — no DOM
+ * writes, no UI feedback beyond what the caller chooses to show — for the
+ * "scan this account before sending" opt-in toggle in Section 1. Runs to
+ * completion (resuming across the server's own budget the same way the UI
+ * version does) or gives up after 20 rounds, same backstop as the UI path.
+ * Failures are swallowed: a scan that can't complete must not block or
+ * corrupt the send it was meant to help, and the deterministic
+ * per-recipient suppression check in /api/send /api/followup already
+ * happens either way regardless of whether this ran.
+ */
+async function scanRepliesFor(email, days) {
+  const s = session(email);
+  if (!s || !s.gPass) return;
+  let cursor = null, rounds = 0;
+  try {
+    do {
+      const r = await fetch('/api/replies', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: email, pass: s.gPass, days: days || 30, cursor }),
+      }).then(x => x.json());
+      if (!r.ok) break;
+      cursor = r.done ? null : r.cursor;
+    } while (cursor && ++rounds < 20);
+  } catch (e) { /* best-effort — the send proceeds regardless */ }
+}
 
 async function scanReplies() {
   if (scanning) return;
@@ -1349,8 +1394,17 @@ async function runSendLoop(opts) {
   $(p + 'BtnSend').disabled = true;
   if ($(p + 'BtnStop')) $(p + 'BtnStop').classList.remove('hidden');
   $(p + 'ProgressWrap').classList.remove('hidden');
-  say(msg, 'Sending\u2026 keep this tab open.', true);
   renderAccountList();
+
+  /* Same opt-in as the compose loop \u2014 see its comment for why this is off
+     by default. A follow-up benefits from this more than an initial send
+     does: it's exactly the moment a stale "who already replied" list does
+     the most damage. */
+  if (acctSession.autoScanOnSend) {
+    say(msg, 'Scanning ' + opts.creds.gUser + ' for replies first (enabled in Section 1)\u2026', true);
+    await scanRepliesFor(opts.creds.gUser, 30);
+  }
+  say(msg, 'Sending\u2026 keep this tab open.', true);
 
   const base = {
     user: opts.creds.gUser, pass: opts.creds.gPass, port: opts.creds.smtpPort,

@@ -181,6 +181,10 @@
 
   <label class="inline"><input id="remember" type="checkbox" checked/> Remember on this browser (stored locally)</label>
 
+  <label class="inline"><input id="autoScanOnSend" type="checkbox"/> Scan this account's inbox for replies before every send
+    <small class="hint">Off by default: this adds a real network round-trip before every campaign or follow-up starts, and if the scan itself is slow or fails, so does the delay before sending. "Scan for replies" in Section 5 does the same thing on demand — this just does it automatically for this one account.</small>
+  </label>
+
   <details class="msection" id="apiKeyBox">
     <summary>API key <small id="apiKeyState">not required here</small></summary>
     <div class="msectionbody">
