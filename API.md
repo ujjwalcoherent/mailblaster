@@ -353,6 +353,29 @@ reason attached rather than silently imported.
 campaign already exist in the inbox — until they are scanned, someone who
 answered weeks ago is not yet suppressed.
 
+### `commit` and multi-round threads
+
+```json
+{ "ok": true, "campaignId": 8, "rounds": 2, "added": 3, "skipped": 1,
+  "nextStep": "scan-replies", "message": "..." }
+```
+
+If the chosen cluster includes more than one message to the SAME
+recipient — someone who was manually chased once before this tool
+existed — `commit` writes **one campaign per round**, chained by `parentId`
+exactly the way a native follow-up chain already works (`api/followup.js`
+does the same thing for a campaign sent through this tool). This is
+required, not a stylistic choice: `sends(campaign_id, recipient_id)` is
+UNIQUE, the same guard against double-sending someone in a single run — so
+a person's original and their manual follow-up cannot both live in one
+campaign row. `campaignId` in the response is the root (round 0) campaign;
+`rounds` says how many were created. Each send still carries its own
+`followup_round` and `in_reply_to_send`, computed by matching In-Reply-To/
+References between the imported messages themselves — so `GET
+/api/thread?recipient=<id>` renders the full multi-round conversation
+correctly immediately after import, and a follow-up sent afterward threads
+onto the latest round rather than the very first message.
+
 ### Finding a campaign by date range and subject-or-body text
 
 `scan` additionally accepts:

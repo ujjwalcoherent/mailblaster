@@ -25,7 +25,7 @@
 const { readJson, send, parseName } = require('../lib/util');
 const store = require('../lib/store');
 const imap = require('../lib/imap');
-const { cluster, parsePasted, rebuildTemplate } = require('../lib/importer');
+const { cluster, parsePasted, rebuildTemplate, linkThreadPositions } = require('../lib/importer');
 const { describe, httpFor, classify } = require('../lib/errors');
 const log = require('../lib/log');
 const auth = require('../lib/auth');
@@ -159,43 +159,91 @@ async function commit(b, res) {
   const first = messages[0];
   const recipients = messages.reduce((n, m) => n + Math.max(1, m.to.length), 0);
 
-  const campaignId = await store.startCampaign({
-    name: b.name || first.subject || 'Imported campaign',
-    subject: first.subject,
-    from: b.user,
-    total: recipients,
-    imported: true,
-    importSource: b.source || 'search',
-    startedAt: first.at,
-  });
+  /* Which of these messages is itself a reply to another one being
+     imported right now — e.g. a person who was manually chased once before
+     this tool existed. Without this, every imported send is hard-coded
+     round 0, and a follow-up sent after import would thread onto the very
+     first message in that person's conversation rather than the latest
+     one. Messages are already sorted oldest-first above, which
+     linkThreadPositions() relies on: a parent is always processed before
+     whatever replies to it. */
+  const threadPositions = linkThreadPositions(messages);
 
-  let added = 0, skipped = 0;
+  /* One recipient can appear at more than one round in this same import
+     (their original AND a manual follow-up someone sent before this tool
+     existed) — and sends(campaign_id, recipient_id) is UNIQUE, exactly the
+     guard against double-sending someone in one run. So each ROUND needs
+     its own campaign, the same way api/followup.js creates a fresh
+     campaign per round for a native follow-up — never several sends to one
+     person crammed into a single campaign id. Group messages by round
+     first, then create (or reuse) one campaign per round, chained via
+     parentId the same way a native follow-up chain is. */
+  const byRound = new Map();   // round number -> [message, ...]
   for (const m of messages) {
-    const to = m.to.length ? m.to : [null];
-    for (const address of to) {
-      if (!address) { skipped++; continue; }      // BCC blast: recipients are hidden
-      const r = await store.insert({
-        campaignId,
-        time: m.at,
-        from: b.user,
-        to: address,
-        name: parseName(address).first || '',
-        subject: m.subject,
-        attachments: m.attachments,
-        status: 'sent',
-        body: m.body,
-        messageId: m.messageId,
-        imported: true,
-      });
-      if (r === 'duplicate') skipped++; else added++;
+    const round = (threadPositions.get(m.uid) || { round: 0 }).round;
+    if (!byRound.has(round)) byRound.set(round, []);
+    byRound.get(round).push(m);
+  }
+  const rounds = [...byRound.keys()].sort((a, c) => a - c);
+
+  const campaignIdByRound = new Map();
+  let rootCampaignId = null;
+  for (const round of rounds) {
+    const roundMessages = byRound.get(round);
+    const parentCampaignId = round > 0 ? campaignIdByRound.get(round - 1) || null : null;
+    const id = await store.startCampaign({
+      name: (b.name || first.subject || 'Imported campaign') + (round > 0 ? ' · follow-up ' + round : ''),
+      subject: roundMessages[0].subject,
+      from: b.user,
+      total: roundMessages.reduce((n, m) => n + Math.max(1, m.to.length), 0),
+      imported: true,
+      importSource: b.source || 'search',
+      startedAt: roundMessages[0].at,
+      parentId: parentCampaignId,
+      followupRound: round,
+    });
+    campaignIdByRound.set(round, id);
+    if (round === 0) rootCampaignId = id;
+  }
+
+  const sendIdByUid = new Map();   // this import's uid -> the DB row just inserted for it
+  let added = 0, skipped = 0;
+  for (const round of rounds) {
+    for (const m of byRound.get(round)) {
+      const to = m.to.length ? m.to : [null];
+      const position = threadPositions.get(m.uid) || { round: 0, parentUid: null };
+      const inReplyToSend = position.parentUid ? sendIdByUid.get(position.parentUid) || null : null;
+      const campaignId = campaignIdByRound.get(round);
+
+      for (const address of to) {
+        if (!address) { skipped++; continue; }      // BCC blast: recipients are hidden
+        const r = await store.insert({
+          campaignId,
+          time: m.at,
+          from: b.user,
+          to: address,
+          name: parseName(address).first || '',
+          subject: m.subject,
+          attachments: m.attachments,
+          status: 'sent',
+          body: m.body,
+          messageId: m.messageId,
+          imported: true,
+          followupRound: round,
+          inReplyToSend,
+          returnId: true,
+        });
+        if (r === 'duplicate') skipped++;
+        else { added++; if (r && r.id) sendIdByUid.set(m.uid, r.id); }
+      }
     }
   }
-  await store.finishCampaign(campaignId, 'done');
+  for (const id of campaignIdByRound.values()) await store.finishCampaign(id, 'done');
 
-  log.info('import_commit', { campaignId, added, skipped });
+  log.info('import_commit', { campaignId: rootCampaignId, rounds: rounds.length, added, skipped });
 
   send(res, 200, {
-    ok: true, campaignId, added, skipped,
+    ok: true, campaignId: rootCampaignId, rounds: rounds.length, added, skipped,
     /* Replies to this campaign already exist in the inbox. Until they are
        scanned, anyone who answered weeks ago is not yet suppressed — which is
        exactly who must not receive a follow-up. */

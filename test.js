@@ -232,7 +232,7 @@ async function errorTests() {
 
 /* ================= importer ================= */
 
-const { cluster, parsePasted, rebuildTemplate } = require('./lib/importer');
+const { cluster, parsePasted, rebuildTemplate, linkThreadPositions } = require('./lib/importer');
 const { normaliseSubject } = require('./lib/imap');
 
 async function importerTests() {
@@ -420,6 +420,54 @@ async function importerTests() {
   await test('no partInfo (nothing usable was found) returns empty rather than throwing', () => {
     assert.strictEqual(textOf({ bodyParts: new Map() }, null), '');
   });
+
+  group('importer — linkThreadPositions() reconstructs follow-up rounds for imported campaigns');
+  // MT: a message-with-threading-headers fixture, richer than M() above.
+  const MT = (uid, to, at, opts) => ({
+    uid, to: [to], at,
+    messageId: '<m' + uid + '@x>',
+    inReplyTo: (opts && opts.inReplyTo) || null,
+    references: (opts && opts.references) || [],
+  });
+  await test('a message with no In-Reply-To is round 0 (the start of its own chain)', () => {
+    const rounds = linkThreadPositions([MT(1, 'a@x.com', '2026-01-01T00:00:00Z')]);
+    assert.deepStrictEqual(rounds.get(1), { round: 0, parentUid: null });
+  });
+  await test('a reply to a message in the SAME cluster becomes round 1', () => {
+    const original = MT(1, 'a@x.com', '2026-01-01T00:00:00Z');
+    const reply = MT(2, 'a@x.com', '2026-01-05T00:00:00Z', { inReplyTo: '<m1@x>' });
+    const rounds = linkThreadPositions([original, reply]);
+    assert.deepStrictEqual(rounds.get(2), { round: 1, parentUid: 1 });
+  });
+  await test('a three-deep chain (original -> follow-up 1 -> follow-up 2) is walked correctly', () => {
+    const m0 = MT(1, 'a@x.com', '2026-01-01T00:00:00Z');
+    const m1 = MT(2, 'a@x.com', '2026-01-05T00:00:00Z', { inReplyTo: '<m1@x>' });
+    const m2 = MT(3, 'a@x.com', '2026-01-10T00:00:00Z', { inReplyTo: '<m2@x>' });
+    const rounds = linkThreadPositions([m0, m1, m2]);
+    assert.strictEqual(rounds.get(1).round, 0);
+    assert.strictEqual(rounds.get(2).round, 1);
+    assert.strictEqual(rounds.get(3).round, 2);
+    assert.strictEqual(rounds.get(3).parentUid, 2, 'round 2 must point at round 1s uid, not the original');
+  });
+  await test('References is checked too, not just In-Reply-To, so a dropped In-Reply-To still links', () => {
+    const m0 = MT(1, 'a@x.com', '2026-01-01T00:00:00Z');
+    const m1 = MT(2, 'a@x.com', '2026-01-05T00:00:00Z', { references: ['<m1@x>'] });   // no inReplyTo
+    const rounds = linkThreadPositions([m0, m1]);
+    assert.deepStrictEqual(rounds.get(2), { round: 1, parentUid: 1 });
+  });
+  await test('a reply pointing OUTSIDE this cluster is round 0, not a crash or a false link', () => {
+    const m = MT(1, 'a@x.com', '2026-01-01T00:00:00Z', { inReplyTo: '<some-other-thread@elsewhere>' });
+    const rounds = linkThreadPositions([m]);
+    assert.deepStrictEqual(rounds.get(1), { round: 0, parentUid: null });
+  });
+  await test('chains for two different recipients in the same cluster never cross', () => {
+    const aOriginal = MT(1, 'a@x.com', '2026-01-01T00:00:00Z');
+    const aFollowup = MT(2, 'a@x.com', '2026-01-05T00:00:00Z', { inReplyTo: '<m1@x>' });
+    const bOriginal = MT(3, 'b@x.com', '2026-01-01T00:00:00Z');
+    const rounds = linkThreadPositions([aOriginal, aFollowup, bOriginal]);
+    assert.strictEqual(rounds.get(2).round, 1);
+    assert.strictEqual(rounds.get(3).round, 0, "b's message must not accidentally chain onto a's");
+  });
 }
 
 /* ================= auth ================= */
@@ -584,6 +632,21 @@ async function storeTests() {
   await test('sends can be listed per campaign', async () => {
     const rows = await store.list(50, { campaignId });
     assert.strictEqual(rows.length, 2);
+  });
+
+  group('store — insert()\'s optional returnId, for linking one send onto another (imported thread chains)');
+  await test('returns just true by default, unchanged for every existing caller', async () => {
+    const camp = await store.startCampaign({ name: 'returnId test', subject: 'Hi', from: 'me@gmail.com', total: 1 });
+    const r = await store.insert({ campaignId: camp, time: new Date().toISOString(), from: 'me@gmail.com',
+      to: 'returnid-default@test.com', name: 'X', subject: 'Hi', status: 'sent', body: '<p>x</p>' });
+    assert.strictEqual(r, true, 'the default contract must not change — api/send.js depends on this');
+  });
+  await test('returnId:true returns the new row\'s id, so a caller can link a later row onto it', async () => {
+    const camp = await store.startCampaign({ name: 'returnId test 2', subject: 'Hi', from: 'me@gmail.com', total: 1 });
+    const r = await store.insert({ campaignId: camp, time: new Date().toISOString(), from: 'me@gmail.com',
+      to: 'returnid-opt-in@test.com', name: 'Y', subject: 'Hi', status: 'sent', body: '<p>y</p>', returnId: true });
+    assert.strictEqual(typeof r, 'object');
+    assert.ok(r.id, 'must return a usable database id');
   });
 
   group('store — sentToday() tracks a rolling 24h Gmail-quota count per account');
