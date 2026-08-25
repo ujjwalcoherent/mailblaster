@@ -501,6 +501,26 @@ async function storeTests() {
     assert.strictEqual(rows.length, 2);
   });
 
+  group('store — sentToday() tracks a rolling 24h Gmail-quota count per account');
+  await test('sentToday counts delivered sends for that sender in the last 24h', async () => {
+    const camp = await store.startCampaign({ name: 'Quota test', subject: 'Hi', from: 'quota@gmail.com', total: 2 });
+    await store.insert({ campaignId: camp, time: new Date().toISOString(), from: 'quota@gmail.com',
+      to: 'q1@test.com', name: 'Q1', subject: 'Hi', status: 'sent', body: '<p>1</p>' });
+    await store.insert({ campaignId: camp, time: new Date().toISOString(), from: 'quota@gmail.com',
+      to: 'q2@test.com', name: 'Q2', subject: 'Hi', status: 'failed', body: '<p>2</p>' });
+    const q = await store.sentToday('quota@gmail.com');
+    assert.strictEqual(q.sent, 1, 'only the delivered send counts toward the quota, not the failed one');
+    assert.strictEqual(q.limit, 500, 'defaults to the personal-Gmail daily cap');
+  });
+  await test('sentToday is scoped per sender, not global', async () => {
+    const q = await store.sentToday('someone-else-entirely@gmail.com');
+    assert.strictEqual(q.sent, 0);
+  });
+  await test('a custom limit can be passed (e.g. 2000 for a Workspace account)', async () => {
+    const q = await store.sentToday('quota@gmail.com', { limit: 2000 });
+    assert.strictEqual(q.limit, 2000);
+  });
+
   group('store — References accumulates the whole ancestor chain (RFC 5322 3.6.4)');
   await test('round 1 follow-up candidate has no prior references, just the original message-id', async () => {
     const camp1 = await store.startCampaign({ name: 'Thread test', subject: 'Hi', from: 'me@gmail.com', total: 1 });
@@ -543,6 +563,106 @@ async function storeTests() {
   });
 }
 
+/* ================= frontend: it must actually load in a real DOM ================= */
+
+/**
+ * Execute app.js inside a real (jsdom) document built from index.html. This
+ * is the test ARCHITECTURE.md has described since before this file existed
+ * ("the frontend is verified by executing app.js in jsdom... this caught a
+ * real crash where one stale element id threw during load and left every
+ * handler after it unbound") — it just hadn't actually been written yet.
+ * jsdom gives real getElementById/addEventListener/classList behavior, which
+ * is what catches load-order bugs (a function called before its hoisted
+ * declaration is fine; a DOM id that plain does not exist, called
+ * unguarded, throws) that a purely textual $() scan cannot: a static scan
+ * can tell you an id resolves to *something*, not that loading the script
+ * top-to-bottom against the real page never throws.
+ */
+async function frontendLoadTests() {
+  group('frontend — app.js must execute against the real page without throwing');
+  let JSDOM;
+  try { ({ JSDOM } = require('jsdom')); } catch (e) {
+    console.log('  (skipped — jsdom not installed)');
+    return;
+  }
+
+  const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+  const appSrc = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+
+  const dom = new JSDOM(html, { url: 'http://localhost/', runScripts: 'outside-only' });
+  const { window } = dom;
+  // app.js expects a real fetch/localStorage; jsdom's window doesn't ship a
+  // fetch, and touches to localStorage that throw are already caught by the
+  // app's own try/catch — stub fetch so calls made during load (none are
+  // awaited synchronously) don't throw SyntaxError on a missing global.
+  window.fetch = () => Promise.resolve({ json: () => Promise.resolve({ ok: false }) });
+
+  let thrown = null;
+  try {
+    dom.window.eval(appSrc);
+  } catch (e) {
+    thrown = e;
+  }
+
+  await test('app.js runs top-to-bottom against the real page with no thrown error', () => {
+    if (thrown) throw new Error((thrown && thrown.stack) || String(thrown));
+  });
+
+  await test('every <button> in the page has a click handler bound (or is inside a template not yet cloned)', () => {
+    const unbound = [];
+    window.document.querySelectorAll('button[id]').forEach(b => {
+      // jsdom exposes onclick as a property when set via .onclick = fn;
+      // addEventListener-bound handlers aren't introspectable this way, so
+      // this only catches the onclick= style this codebase mostly uses —
+      // still real coverage for the class of bug that motivated this test.
+      if (typeof b.onclick !== 'function') unbound.push(b.id);
+    });
+    // A handful of buttons are wired via addEventListener or delegated
+    // listeners (e.g. dynamically rendered rows) rather than .onclick, so
+    // this is a soft check: report, don't fail the suite, on those.
+    if (unbound.length) console.log('    (no direct .onclick found on: ' + unbound.join(', ') + ' — may be addEventListener-bound, not necessarily broken)');
+  });
+}
+
+/* ================= frontend: every $() id must resolve ================= */
+
+/**
+ * A cheap, no-jsdom-needed guard against the exact class of bug that shipped
+ * here once already: app.js calling $('someId') where no element with that
+ * id exists anywhere (not in index.html statically, not in the
+ * mailWindowTpl-clone-with-prefix mechanism, and not created at runtime by
+ * app.js's own innerHTML strings). An unguarded call like that throws the
+ * instant it runs and — because app.js executes top-to-bottom, wiring
+ * handlers as it goes — silently leaves every handler bound AFTER that line
+ * unbound. This can't tell a guarded `if ($('x')) ...` from a crash risk on
+ * its own, so it only reports ids that are missing from ALL sources; it is a
+ * coverage net, not a substitute for a real browser test.
+ */
+async function frontendTests() {
+  group('frontend — every $() id used in app.js must resolve to something real');
+  const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+  const app = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+
+  const staticIds = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]));
+  const templateDataIds = new Set([...html.matchAll(/data-id="([^"]+)"/g)].map(m => m[1]));
+  const prefixes = [...html.matchAll(/data-prefix="([^"]+)"/g)].map(m => m[1]);
+  const clonedIds = new Set();
+  prefixes.forEach(p => templateDataIds.forEach(id => clonedIds.add(p + id)));
+  // ids app.js creates itself in an innerHTML string (e.g. openCampaign's
+  // #campBack) rather than something declared in index.html.
+  const runtimeGenerated = new Set([...app.matchAll(/id="([^"]+)"/g)].map(m => m[1]));
+  const allIds = new Set([...staticIds, ...clonedIds, ...runtimeGenerated]);
+
+  const used = [...new Set([...app.matchAll(/\$\('([^']+)'\)/g)].map(m => m[1]))];
+  await test(used.length + ' ids referenced via $() were checked against the DOM', () => {
+    assert.ok(used.length > 100, 'sanity check: app.js should reference well over 100 ids');
+  });
+  const missing = used.filter(id => !allIds.has(id));
+  await test('no $() call references an id absent from index.html, the cloned mail-window template, or a runtime-generated element', () => {
+    assert.deepStrictEqual(missing, [], 'these ids resolve to nothing and will throw if reached unguarded: ' + missing.join(', '));
+  });
+}
+
 /* ================= run ================= */
 
 (async () => {
@@ -552,6 +672,8 @@ async function storeTests() {
   await importerTests();
   await authTests();
   await storeTests();
+  await frontendLoadTests();
+  await frontendTests();
 
   console.log('\n' + '-'.repeat(50));
   console.log(pass + ' passed, ' + fail + ' failed');

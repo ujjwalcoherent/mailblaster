@@ -4,6 +4,7 @@
  *
  *   GET  /api/campaigns?owner=me@gmail.com          -> the runs
  *   GET  /api/campaigns?id=12&people=1              -> who was in run 12
+ *   GET  /api/campaigns?quota=me@gmail.com          -> that account's rolling 24h send count
  *   POST /api/campaigns { action:'start', ... }     -> create a campaign row
  *   POST /api/campaigns { action:'finish', campaignId, status } -> close it out
  *
@@ -42,6 +43,15 @@ async function get(req, res) {
     if (q.people && q.id) {
       const people = await store.campaignPeople(q.id);
       return send(res, 200, { ok: true, available: true, people });
+    }
+    if (q.quota) {
+      /* Google enforces this cap itself (500 recipients/24h on a personal
+         account), not us — this just surfaces it up front, per account, so a
+         page with several accounts sending at once can show each one's
+         remaining headroom instead of the first sign of trouble being a
+         mid-campaign SEND_QUOTA_EXCEEDED. */
+      const quota = await store.sentToday(q.quota);
+      return send(res, 200, { ok: true, available: true, quota });
     }
     const campaigns = await store.campaigns(q.owner, q.limit);
     send(res, 200, { ok: true, available: true, driver: store.driver(), campaigns });

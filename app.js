@@ -1,6 +1,62 @@
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+/* ================= multi-account sessions =================
+   Several Gmail accounts can each have a campaign in flight at once in this
+   one tab. Everything that used to be a single module-level flag (sending,
+   stopRequested) or a single cache (campaignCache, logCache, followupAudience,
+   replyCache) is a cross-contamination bug waiting to happen the moment a
+   second account is added: Stop on account B would silently also kill
+   account A's still-running send loop, because both read and write the same
+   variable. This map is the fix — one slot of state per account, addressed
+   by lowercased email, so two accounts sending concurrently can never step on
+   each other.
+
+   The single-account UI (Sections 1-5) still shows exactly one account's
+   state at a time; `activeAccount()` says which. Switching accounts is a
+   cheap pointer change, not a page reload — sending, once started, keeps
+   running against ITS OWN account's session even while a different one is
+   the one currently shown on screen. */
+const ACCOUNTS_KEY = 'mailblaster.accounts';   // ordered list of saved account emails
+const sessions = new Map();                    // email -> AccountSession
+
+function newSession(email) {
+  return {
+    email,
+    gPass: '', fromName: '', replyTo: '', smtpPort: '587',
+    sending: false, stopRequested: false,
+    lastError: null,
+    sentToday: null,           // filled in by refreshQuota()
+  };
+}
+
+function session(email) {
+  const key = String(email || '').trim().toLowerCase();
+  if (!key) return null;
+  if (!sessions.has(key)) sessions.set(key, newSession(key));
+  return sessions.get(key);
+}
+
+let activeAccountEmail = '';
+const activeAccount = () => session(activeAccountEmail);
+
+function savedAccountList() {
+  try { return JSON.parse(localStorage.getItem(ACCOUNTS_KEY) || '[]'); } catch (e) { return []; }
+}
+function saveAccountList(list) {
+  try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(list)); } catch (e) {}
+}
+/* Per-account credentials are namespaced by email so adding a second account
+   can never overwrite the first's saved App Password — the single flat
+   'mailblaster.creds' key this replaced could only ever hold one account. */
+const acctCredsKey = email => 'mailblaster.creds.' + email;
+function loadAccountCreds(email) {
+  try { return JSON.parse(localStorage.getItem(acctCredsKey(email)) || '{}'); } catch (e) { return {}; }
+}
+function saveAccountCreds(email, creds) {
+  try { localStorage.setItem(acctCredsKey(email), JSON.stringify(creds)); } catch (e) {}
+}
+
 let recipients = [];
 
 /* ---------- API key ----------
@@ -159,16 +215,13 @@ function hintFor(r) {
   return '';
 }
 
-/* ================= SECTION 1 — Gmail app password ================= */
+/* ================= SECTION 1 — Gmail accounts ================= */
 
-const CRED_KEY = 'mailblaster.creds';
-(function restore() {
-  try {
-    const c = JSON.parse(localStorage.getItem(CRED_KEY) || '{}');
-    ['gUser', 'gPass', 'fromName', 'replyTo', 'smtpPort'].forEach(k => { if (c[k]) $(k).value = c[k]; });
-  } catch (e) {}
-})();
-
+/* The form (#gUser etc.) always edits whichever account is "active" — the
+   one expanded in the account list below. creds() keeps its old shape and
+   name so every other function in this file that already calls creds()
+   needs no change; only what backs it moved from one flat localStorage key
+   to a per-account session. */
 function creds() {
   return {
     gUser: $('gUser').value.trim(),
@@ -178,11 +231,133 @@ function creds() {
     smtpPort: $('smtpPort').value,
   };
 }
+
+function fillAccountForm(email) {
+  const s = session(email) || newSession('');
+  $('gUser').value = email || '';
+  $('gPass').value = s.gPass || '';
+  $('fromName').value = s.fromName || '';
+  $('replyTo').value = s.replyTo || '';
+  $('smtpPort').value = s.smtpPort || '587';
+  $('editingAccountLabel').textContent = email || '— new account —';
+}
+
 function persist() {
-  if ($('remember').checked) localStorage.setItem(CRED_KEY, JSON.stringify(creds()));
-  else localStorage.removeItem(CRED_KEY);
+  const c = creds();
+  if (!c.gUser) return;
+  const s = session(c.gUser);
+  Object.assign(s, { gPass: c.gPass, fromName: c.fromName, replyTo: c.replyTo, smtpPort: c.smtpPort });
+  activeAccountEmail = c.gUser;
+  if ($('remember').checked) {
+    saveAccountCreds(c.gUser, c);
+    const list = savedAccountList();
+    if (!list.includes(c.gUser)) { list.push(c.gUser); saveAccountList(list); }
+  }
+  renderAccountList();
+  refreshComposeHeader();
 }
 ['gUser', 'gPass', 'fromName', 'replyTo', 'smtpPort', 'remember'].forEach(id => $(id).addEventListener('change', persist));
+
+/* Render the saved-account cards. Each shows a live status chip (idle /
+   sending N/M / error) read straight from that account's own session, so
+   two cards never show the same in-flight state — the bug this whole model
+   exists to prevent. */
+function renderAccountList() {
+  const host = $('accountList');
+  if (!host) return;
+  const list = savedAccountList();
+  if (!list.length) {
+    host.innerHTML = '<p class="hint">No accounts saved yet — fill in the form below and click Verify, or Add another account.</p>';
+    return;
+  }
+  host.innerHTML = list.map(email => {
+    const s = session(email);
+    const editing = email === activeAccountEmail;
+    const status = s.sending ? 'sending' : (s.lastError ? 'error' : 'idle');
+    const statusLabel = s.sending ? 'sending…' : (s.lastError ? 'error' : 'idle');
+    const quota = s.sentToday && typeof s.sentToday.sent === 'number'
+      ? quotaHtml(s.sentToday) : '';
+    return '<div class="accountcard' + (editing ? ' editing' : '') + '" data-email="' + esc(email) + '">'
+      + '<span class="addr">' + esc(email) + '</span>'
+      + '<span class="acctstatus ' + status + '">' + esc(statusLabel) + '</span>'
+      + quota
+      + '<button class="edit" data-email="' + esc(email) + '">Edit</button>'
+      + '<button class="danger remove" data-email="' + esc(email) + '">Remove</button>'
+      + '</div>';
+  }).join('');
+
+  host.querySelectorAll('.edit').forEach(b => b.onclick = () => selectAccount(b.dataset.email));
+  host.querySelectorAll('.remove').forEach(b => b.onclick = () => removeAccount(b.dataset.email));
+}
+
+/* Gmail's own daily cap (500 recipients/24h on a personal account, enforced
+   by Google, not by this app) is easy to hit invisibly across several
+   concurrently-sending accounts. Showing it up front, per account, means a
+   quota exhaustion is a thing you see coming rather than a mid-campaign
+   SEND_QUOTA_EXCEEDED surprise. */
+function quotaHtml(q) {
+  const pct = Math.min(100, Math.round((q.sent / (q.limit || 500)) * 100));
+  const cls = pct >= 100 ? 'full' : pct >= 80 ? 'warn' : '';
+  return '<span class="quota ' + cls + '"><span class="quotabar ' + cls + '"><i style="width:' + pct + '%"></i></span>'
+    + q.sent + ' / ' + q.limit + ' sent today</span>';
+}
+
+async function refreshQuota(email) {
+  const s = session(email);
+  if (!s) return;
+  try {
+    const r = await fetch('/api/campaigns?quota=' + encodeURIComponent(email)).then(x => x.json());
+    if (r && r.ok && r.quota) s.sentToday = r.quota;
+  } catch (e) { /* quota display is a nicety, not load-bearing — fail quiet */ }
+  renderAccountList();
+}
+
+function selectAccount(email) {
+  activeAccountEmail = String(email || '').trim().toLowerCase();
+  fillAccountForm(activeAccountEmail);
+  renderAccountList();
+  refreshComposeHeader();
+  campaignCache = [];
+  if (typeof loadCampaigns === 'function') loadCampaigns();
+  refreshQuota(activeAccountEmail);
+}
+
+function removeAccount(email) {
+  const s = session(email);
+  if (s && s.sending) {
+    return alert('"' + email + '" is still sending. Stop that campaign before removing the account.');
+  }
+  if (!confirm('Remove ' + email + ' from this browser? Its send history on the server is untouched — this only forgets the saved credentials here.')) return;
+  saveAccountList(savedAccountList().filter(e => e !== email));
+  try { localStorage.removeItem(acctCredsKey(email)); } catch (e) {}
+  sessions.delete(email);
+  if (activeAccountEmail === email) {
+    const remaining = savedAccountList();
+    selectAccount(remaining[0] || '');
+  } else {
+    renderAccountList();
+  }
+}
+
+if ($('btnAddAccount')) $('btnAddAccount').onclick = () => {
+  activeAccountEmail = '';
+  fillAccountForm('');
+  $('gUser').focus();
+  renderAccountList();
+};
+
+/* Restore every previously saved account so their cards show up immediately,
+   then activate whichever was last active (or the first one saved). */
+(function restore() {
+  const list = savedAccountList();
+  list.forEach(email => {
+    const c = loadAccountCreds(email);
+    const s = session(email);
+    Object.assign(s, { gPass: c.gPass || '', fromName: c.fromName || '', replyTo: c.replyTo || '', smtpPort: c.smtpPort || '587' });
+  });
+  if (list.length) selectAccount(list[0]);
+  else renderAccountList();
+})();
 
 $('btnVerify').onclick = async () => {
   const b = $('btnVerify');
@@ -196,7 +371,10 @@ $('btnVerify').onclick = async () => {
       body: JSON.stringify({ user: c.gUser, pass: c.gPass, port: c.smtpPort }),
     }).then(x => x.json());
     say($('verifyMsg'), r.ok ? '✓ ' + r.message : '✗ ' + r.error + hintFor(r), r.ok);
+    const s = session(c.gUser);
+    if (s) s.lastError = r.ok ? null : (r.error || 'verification failed');
     persist();
+    if (c.gUser) refreshQuota(c.gUser);
   } catch (e) {
     say($('verifyMsg'), '✗ ' + e.message, false);
   }
@@ -519,14 +697,28 @@ $('composeBtnPreview').onclick = () => {
 
 /* The send loop lives in this tab: closing or reloading mid-campaign kills it.
    Warn before that happens, and let the user resume by skipping addresses that
-   already went out. */
-let sending = false;
-let stopRequested = false;
+   already went out.
+
+   sending/stopRequested used to be single page-wide flags — meaning Stop on
+   ANY mail window silently killed every other account's in-flight send too,
+   and the compose send loop below used to read/write these same two globals
+   directly. They now live on each account's own session (session(email).
+   sending / .stopRequested), so two accounts sending at once can never step
+   on each other. anySending()/anyStopRequested() below exist only for the
+   handful of places (beforeunload, the legacy top-level compose loop) that
+   still need a page-wide answer. */
+function anySending() {
+  for (const s of sessions.values()) if (s.sending) return true;
+  return false;
+}
+function sendingAccounts() {
+  return [...sessions.values()].filter(s => s.sending).map(s => s.email);
+}
 
 window.addEventListener('beforeunload', e => {
-  if (!sending) return;
+  if (!anySending()) return;
   e.preventDefault();
-  e.returnValue = 'A campaign is still sending. Leaving this page stops it.';
+  e.returnValue = 'Still sending for: ' + sendingAccounts().join(', ') + '. Leaving this page stops them.';
   return e.returnValue;
 });
 
@@ -580,7 +772,10 @@ async function sentAddresses() {
 }
 
 $('composeBtnStop').onclick = () => {
-  stopRequested = true;
+  /* Only the account whose form is showing right now is stopped — Stop must
+     never reach across and kill a different account's in-flight loop. */
+  const s = activeAccount();
+  if (s) s.stopRequested = true;
   say($('composeMsg'), 'Stopping after the current email…', false);
 };
 
@@ -701,16 +896,23 @@ $('composeBtnSend').onclick = async () => {
   const total = recipients.length;
   let sent = 0, failed = 0;
 
-  sending = true;
+  /* Bound to THIS account's session, captured now — even if the user switches
+     the active account in Section 1 mid-campaign, this loop keeps checking
+     and clearing flags on the account it actually started for, never
+     whichever account happens to be showing on screen by the time a later
+     iteration runs. */
+  const acctSession = session(c.gUser);
+  acctSession.sending = true;
+  acctSession.stopRequested = false;
   $('composeBtnSend').disabled = true;
   $('composeBtnStop').classList.remove('hidden');
-  stopRequested = false;
   $('composeProgressWrap').classList.remove('hidden');
   say($('composeMsg'), 'Sending… keep this tab open — closing or reloading it stops the campaign.', true);
+  renderAccountList();
 
   let stopped = false;
   for (let i = 0; i < total; i++) {
-    if (stopRequested) { stopped = true; break; }
+    if (acctSession.stopRequested) { stopped = true; break; }
     const r = recipients[i];
     let entry;
     try {
@@ -749,13 +951,15 @@ $('composeBtnSend').onclick = async () => {
     } catch (e) { /* not fatal — the campaign row just stays 'running' */ }
   }
 
-  sending = false;
+  acctSession.sending = false;
   $('composeBtnStop').classList.add('hidden');
   say($('composeMsg'),
     (stopped ? '■ Stopped — ' : '✓ Finished — ') + sent + ' delivered, ' + failed + ' failed.'
       + (stopped || failed ? ' Use "Skip already-sent" in Section 2 before resuming.' : ''),
     !stopped && failed === 0);
   $('composeBtnSend').disabled = false;
+  renderAccountList();
+  refreshQuota(c.gUser);
   loadAnalytics();
 };
 
@@ -945,8 +1149,13 @@ async function loadFollowupAudience() {
   if (!id) {
     followupAudience = [];
     ['cntNoReply', 'cntOoo', 'cntSoft', 'cntFailed'].forEach(function (k) { setCount(k, 0); });
-    $('fuCount').textContent = '0';
-    $('fuTo').textContent = 'Choose a campaign first';
+    /* This used to call $('fuTo').textContent directly and unguarded — but
+       clearing the campaign picker with nothing sent yet is a normal, common
+       action, and an unguarded DOM write here threw every time it happened,
+       which leaves every handler bound AFTER this line unbound.
+       updateFollowupCount() already reads fuTo through a guarded $() check,
+       so delegate to it instead of touching the DOM directly here. */
+    updateFollowupCount();
     return;
   }
   try {
@@ -990,7 +1199,6 @@ function selectedAudience() {
 
 function updateFollowupCount() {
   const n = selectedAudience().length;
-  if ($('fuCount')) $('fuCount').textContent = String(n);
   if ($('fuTo')) {
     $('fuTo').textContent = n
       ? n + ' recipient' + (n === 1 ? '' : 's') + ' who have not replied'
@@ -1050,13 +1258,18 @@ async function sendFollowup() {
 }
 if ($('fuBtnSend')) $('fuBtnSend').onclick = sendFollowup;
 if ($('fuBtnStop')) $('fuBtnStop').onclick = function () {
-  stopRequested = true;
+  const s = activeAccount();
+  if (s) s.stopRequested = true;
   say($('fuMsg'), 'Stopping after the current email\u2026', false);
 };
 
 /* ---------- one send loop, used by campaigns and follow-ups ----------
    Threading is the only real difference: a follow-up carries In-Reply-To and
-   References so Gmail nests it under the original. */
+   References so Gmail nests it under the original.
+
+   Bound to opts.creds.gUser's own session (not the globals sending/
+   stopRequested this used to read/write) so a follow-up running for account
+   A is untouched by a Stop click on account B's window, and vice versa. */
 async function runSendLoop(opts) {
   const p = opts.prefix;
   const msg = $(p + 'Msg');
@@ -1064,12 +1277,14 @@ async function runSendLoop(opts) {
   const total = opts.people.length;
   let sent = 0, failed = 0, skipped = 0;
 
-  sending = true;
-  stopRequested = false;
+  const acctSession = session(opts.creds.gUser);
+  acctSession.sending = true;
+  acctSession.stopRequested = false;
   $(p + 'BtnSend').disabled = true;
   if ($(p + 'BtnStop')) $(p + 'BtnStop').classList.remove('hidden');
   $(p + 'ProgressWrap').classList.remove('hidden');
   say(msg, 'Sending\u2026 keep this tab open.', true);
+  renderAccountList();
 
   const base = {
     user: opts.creds.gUser, pass: opts.creds.gPass, port: opts.creds.smtpPort,
@@ -1086,7 +1301,7 @@ async function runSendLoop(opts) {
 
   let stopped = false;
   for (let i = 0; i < total; i++) {
-    if (stopRequested) { stopped = true; break; }
+    if (acctSession.stopRequested) { stopped = true; break; }
     const person = opts.people[i];
     const body = Object.assign({
       recipient: { email: person.email, first: person.first, full: person.full },
@@ -1127,13 +1342,15 @@ async function runSendLoop(opts) {
     if (delay && i < total - 1) await new Promise(function (r) { setTimeout(r, delay); });
   }
 
-  sending = false;
+  acctSession.sending = false;
   if ($(p + 'BtnStop')) $(p + 'BtnStop').classList.add('hidden');
   $(p + 'BtnSend').disabled = false;
   say(msg, (stopped ? '\u25a0 Stopped \u2014 ' : '\u2713 Finished \u2014 ') + sent + ' delivered'
     + (failed ? ', ' + failed + ' failed' : '')
     + (skipped ? ', ' + skipped + ' skipped as already sent' : '') + '.',
     !stopped && !failed);
+  renderAccountList();
+  refreshQuota(opts.creds.gUser);
   return { sent: sent, failed: failed, skipped: skipped, stopped: stopped };
 }
 

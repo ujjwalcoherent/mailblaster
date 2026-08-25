@@ -137,7 +137,23 @@
 
 <!-- ============ SECTION 1 : GMAIL APP PASSWORD ============ -->
 <section id="s1" class="panel active">
-  <h2>Section 1 — Gmail App Password</h2>
+  <h2>Section 1 — Gmail accounts</h2>
+  <p class="hint">Add one account per Gmail address you send from. Each keeps its own credentials,
+     send progress and Stop button — starting a campaign on one account never touches another,
+     so several can send at once in this tab.</p>
+
+  <!-- One card per saved account. Rendered by app.js; the account whose card
+       is expanded is the one the form below edits and the one Sections 2-5
+       currently act on. Concurrent accounts each get their own mail-window
+       mount (Section 3/5), keyed by account id, so two sends never share
+       state. -->
+  <div id="accountList" class="accountlist"></div>
+  <div class="row">
+    <button id="btnAddAccount" class="primary">+ Add another account</button>
+    <span id="accountMsg" class="msg" role="status" aria-live="polite"></span>
+  </div>
+
+  <h3>Editing <span id="editingAccountLabel">— new account —</span></h3>
   <p class="hint">Use a Google <b>App Password</b> (16 characters), not your normal password.
      Enable 2-Step Verification, then create one at
      <span class="mono">myaccount.google.com → Security → App passwords</span>.</p>
