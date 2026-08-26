@@ -1352,6 +1352,7 @@ async function sendFromWindow(prefix, opts) {
   say(msgEl, 'Sending… keep this tab open — closing or reloading it stops the campaign.', true);
 
   let stopped = false;
+  const loopStartedAt = Date.now();
   for (let i = 0; i < total; i++) {
     if (acctSession.stopRequested) { stopped = true; break; }
     const r = list[i];
@@ -1379,7 +1380,15 @@ async function sendFromWindow(prefix, opts) {
 
     if ($(prefix + 'Bar')) $(prefix + 'Bar').style.width = ((i + 1) / total * 100) + '%';
     if ($(prefix + 'ProgressText')) {
+      // Measured from what's ACTUALLY happened so far (real network time
+      // included, not just the configured delay), so the estimate reflects
+      // this account's real pace rather than assuming every send takes
+      // exactly as long as the delay setting.
+      const remaining = total - (i + 1);
+      const avgMsPerSend = (Date.now() - loopStartedAt) / (i + 1);
+      const etaTxt = remaining > 0 ? ' · about ' + humanSpan(remaining * avgMsPerSend) + ' left' : '';
       $(prefix + 'ProgressText').textContent = (i + 1) + ' / ' + total + ' · ' + sent + ' delivered · ' + failed + ' failed'
+        + etaTxt
         + (entry.status === 'failed' ? ' · last error: ' + entry.error : '');
     }
     /* The account card's status chip shows "sending 7/50" live, not just
@@ -2064,6 +2073,7 @@ async function runSendLoop(opts) {
   };
 
   let stopped = false;
+  const loopStartedAt = Date.now();
   for (let i = 0; i < total; i++) {
     if (acctSession.stopRequested) { stopped = true; break; }
     const person = opts.people[i];
@@ -2098,9 +2108,13 @@ async function runSendLoop(opts) {
     else failed++;
 
     $(p + 'Bar').style.width = ((i + 1) / total * 100) + '%';
+    const remaining = total - (i + 1);
+    const avgMsPerSend = (Date.now() - loopStartedAt) / (i + 1);
+    const etaTxt = remaining > 0 ? ' \u00b7 about ' + humanSpan(remaining * avgMsPerSend) + ' left' : '';
     $(p + 'ProgressText').textContent = (i + 1) + ' / ' + total + ' \u00b7 ' + sent + ' delivered'
       + (failed ? ' \u00b7 ' + failed + ' failed' : '')
       + (skipped ? ' \u00b7 ' + skipped + ' already sent' : '')
+      + etaTxt
       + (!res.ok && res.error ? ' \u00b7 ' + res.error : '');
     acctSession.progress = { done: i + 1, total };
     renderAccountList();
