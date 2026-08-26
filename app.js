@@ -543,6 +543,13 @@ $('btnVerify').onclick = async () => {
     if (s) s.lastError = r.ok ? null : (r.error || 'verification failed');
     persist();
     if (c.gUser) refreshQuota(c.gUser);
+    /* A newly-verified account may already have real campaign history on
+       the server (added on a new browser/device, or re-added after being
+       removed here — removeAccount() only ever forgets local credentials,
+       never server-side history). Refreshing here means that history shows
+       up the moment the account is usable, not only after separately
+       clicking over to Activity and hoping it's already loaded. */
+    if (r.ok && typeof loadCampaigns === 'function') loadCampaigns();
     // A successful Verify means this account is fully set up — the form
     // has done its job, so it closes back down to the compact card list.
     if (r.ok) hideAccountFormBox();
