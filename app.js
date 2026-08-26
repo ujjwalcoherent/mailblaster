@@ -263,6 +263,19 @@ function refreshWizardSteps() {
     el.classList.toggle('done', currentStep > 0 && n < currentStep);
     el.classList.toggle('current', currentStep > 0 && n === currentStep);
   });
+
+  /* Compose/Review/Send are one panel (s4) with three blocks tagged
+     data-substep="compose|review|send" — a CSS class on the panel itself
+     shows only the matching block(s), so clicking a step actually swaps
+     what's on screen instead of just scrolling within one long page. The
+     From/To/Subject header has no data-substep, so it stays visible
+     throughout — you always know who you're writing to and what the
+     subject is, on every one of the three "screens." */
+  const composePanel = $('s4');
+  if (composePanel) {
+    composePanel.classList.remove('substep-compose', 'substep-review', 'substep-send');
+    composePanel.classList.add('substep-' + composeSubstep);
+  }
 }
 refreshWizardSteps();
 

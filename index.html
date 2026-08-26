@@ -81,7 +81,7 @@
       </details>
     </div>
 
-    <div class="toolbar">
+    <div class="toolbar" data-substep="compose">
       <button data-cmd="bold" title="Bold"><b>B</b></button>
       <button data-cmd="italic" title="Italic"><i>I</i></button>
       <button data-cmd="underline" title="Underline"><u>U</u></button>
@@ -103,7 +103,7 @@
       <button data-id="BtnHtmlView">&lt;/&gt; HTML</button>
     </div>
 
-    <div class="mailsheet">
+    <div class="mailsheet" data-substep="compose">
       <input data-id="Greeting" class="mgreeting" type="text" value="Hi {{name}}," aria-label="Greeting line"/>
       <div data-id="Editor" class="editor" contenteditable="true"><p>Write your message here.</p></div>
       <textarea data-id="HtmlSource" class="editor hidden" rows="10"></textarea>
@@ -149,7 +149,7 @@
       </details>
     </div>
 
-    <div class="mailfoot">
+    <div class="mailfoot" data-substep="send">
       <button data-id="BtnSend" class="primary big">Send</button>
       <button data-id="BtnStop" class="danger hidden">Stop</button>
       <button data-id="BtnPreview">Preview</button>
@@ -157,7 +157,7 @@
       <span data-id="Msg" class="msg" role="status" aria-live="polite"></span>
     </div>
 
-    <div data-id="ProgressWrap" class="hidden">
+    <div data-id="ProgressWrap" class="hidden" data-substep="send">
       <div class="bar"><div data-id="Bar" class="fill"></div></div>
       <div data-id="ProgressText" class="hint"></div>
     </div>
@@ -362,14 +362,14 @@ info@somecompany.com"></textarea>
   <div class="mailmount" data-prefix="compose" data-mode="campaign"></div>
   <div id="composeExtraWindows"></div>
 
-  <p class="hint warn">&#9888; Sending runs in this tab. Keep it open until the campaign finishes &mdash;
+  <p class="hint warn" data-substep="send">&#9888; Sending runs in this tab. Keep it open until the campaign finishes &mdash;
      reloading or closing the page stops it partway.</p>
-  <div id="preview" class="preview hidden"></div>
+  <div id="preview" class="preview hidden" data-substep="review"></div>
 
   <!-- Only shown once 2+ accounts are checked above: one combined recipient
        table across every checked window, and the one confirm that starts
        every one of their send loops. -->
-  <div id="composeMultiBox" class="hidden">
+  <div id="composeMultiBox" class="hidden" data-substep="review">
     <h3>Send to several accounts at once</h3>
     <p class="hint">Every recipient across every checked account below, so one review covers all of them
        before anything sends.</p>

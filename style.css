@@ -39,12 +39,23 @@ body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system
 .wstep:hover{background:#eef1f8}
 .wstepnum{width:22px;height:22px;border-radius:99px;display:flex;align-items:center;justify-content:center;
   font-size:12px;font-weight:700;border:1.5px solid var(--line);color:var(--muted);flex:none;background:#fff}
-.wstep.current{color:var(--ink)}
-.wstep.current .wstepnum{border-color:var(--brand);color:var(--brand);background:#eef1fb}
-.wstep.done .wstepnum{background:var(--brand);border-color:var(--brand);color:#fff}
-.wstep.done .wstepnum::before{content:'✓'}
-.wstep.done .wstepnum{font-size:0}
+.wstep.current{color:var(--ink);background:#eef1f8}
+.wstep.current .wstepnum{border-color:var(--brand);color:var(--brand);background:#eef1fb;border-width:2px}
+.wstep.done{color:var(--muted)}
+.wstep.done .wstepnum{background:var(--brand);border-color:var(--brand);color:transparent;font-size:0;position:relative}
+.wstep.done .wstepnum::before{content:'✓';color:#fff;font-size:13px;font-weight:700;position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
 @media(max-width:860px){.wstep span:not(.wstepnum){display:none} .wstep:not(:last-child)::after{width:10px}}
+
+/* Compose/Review/Send: one panel (#s4), three blocks. Each block carries
+   data-substep="compose|review|send"; the panel gets exactly one
+   substep-X class (set in refreshWizardSteps()), and only the matching
+   block(s) show — elements with NO data-substep (the From/To/Subject
+   header) are unaffected by any of these rules, so they stay visible on
+   all three. This is what makes clicking a step actually swap the screen
+   instead of merely scrolling to a spot on one long page. */
+#s4.substep-compose [data-substep]:not([data-substep="compose"]),
+#s4.substep-review [data-substep]:not([data-substep="review"]),
+#s4.substep-send [data-substep]:not([data-substep="send"]){display:none !important}
 
 main{max-width:1040px;margin:0 auto;padding:22px}
 .panel{display:none;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px;
