@@ -775,7 +775,7 @@ function viewSent(i) {
   $('modal').classList.remove('hidden');
 }
 
-function closeModal() { $('modal').classList.add('hidden'); }
+function closeModal() { $('modal').classList.add('hidden'); $('modalBox').classList.remove('wide'); }
 $('modalClose').onclick = closeModal;
 $('modal').onclick = e => { if (e.target.id === 'modal') closeModal(); };
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
@@ -1777,6 +1777,14 @@ function personLabel(p) {
   return p.contacts > 1 ? p.contacts + ' contacts' : 'no reply';
 }
 
+/* Shared with Section 5's reply list further down — one label per reply
+   kind, defined here since the thread table (right below) is the first
+   thing in file order to need it. */
+const KIND_LABEL = {
+  reply: 'Replied', ooo: 'Out of office', bounce: 'Bounced',
+  unsubscribe: 'Unsubscribed', none: 'No reply', auto: 'Bulk mail',
+};
+
 /* Level 3: the whole conversation with one person, in order. */
 async function openThread(p) {
   if (!p) return;
@@ -1794,18 +1802,74 @@ async function openThread(p) {
     + (p.repliedAt ? ' &middot; replied ' + fmtWhen(p.repliedAt) : '')
     + (p.doNotContact ? ' &nbsp;&middot;&nbsp; <b>suppressed from future sends</b>' : '');
 
-  $('modalBody').innerHTML = trail.length
-    ? '<ol class="trail">' + trail.map(function (e) {
-        return '<li class="' + e.type + '">'
-          + '<div class="trailhead"><b>' + esc(e.label) + '</b>'
-          + '<span class="when">' + fmtWhen(e.at) + '</span></div>'
-          + '<div class="trailbody">' + esc(e.subject || '')
-          + (e.snippet ? '<br/><span class="hint">' + esc(e.snippet) + '</span>' : '')
-          + (e.error ? '<br/><span class="msg bad">' + esc(e.error) + '</span>' : '')
-          + '</div></li>';
-      }).join('') + '</ol>'
-    : '<p class="hint">No messages recorded for this person yet.</p>';
+  renderTrailTable(trail);
+  $('modalBox').classList.add('wide');
   $('modal').classList.remove('hidden');
+}
+
+/* One row per event (sent or received), oldest first — a proper table
+   rather than a loose bullet list, so "who got what and when" reads at a
+   glance. A sent row expands in place to the exact delivered HTML
+   (lazy-fetched via /api/body — a body is several KB and only worth the
+   round trip once someone actually asks to see it) plus its attachment
+   filenames; a received row expands to its snippet. Only one row is open
+   at a time, mirroring how the campaign drill-down table already behaves. */
+function renderTrailTable(trail) {
+  const host = $('modalBody');
+  if (!trail.length) {
+    host.innerHTML = '<p class="hint">No messages recorded for this person yet.</p>';
+    return;
+  }
+  host.innerHTML = '<div class="tablewrap"><table class="trailtable"><thead><tr>'
+    + '<th>When</th><th></th><th>Subject</th><th>Attachments</th><th></th>'
+    + '</tr></thead><tbody>'
+    + trail.map(function (e, i) {
+        const statusBadge = e.type === 'sent'
+          ? '<span class="badge ' + (e.status === 'sent' ? 'sent' : 'failed') + '">' + esc(e.status || '') + '</span>'
+          : '<span class="badge ' + (e.kind || 'none') + '">' + esc(KIND_LABEL[e.kind] || e.kind || '') + '</span>';
+        const attachTxt = (e.attachments && e.attachments.length) ? e.attachments.map(esc).join(', ') : '—';
+        return '<tr class="trailrow" data-i="' + i + '">'
+          + '<td class="when">' + fmtWhen(e.at) + '</td>'
+          + '<td>' + statusBadge + '</td>'
+          + '<td><b>' + esc(e.label || (e.type === 'sent' ? 'Sent' : 'Received')) + '</b> — ' + esc(e.subject || '(no subject)') + '</td>'
+          + '<td class="hint">' + attachTxt + '</td>'
+          + '<td><button class="expand" data-i="' + i + '">Details</button></td>'
+          + '</tr>'
+          + '<tr class="trailexpand hidden" data-i="' + i + '"><td colspan="5"></td></tr>';
+      }).join('')
+    + '</tbody></table></div>';
+
+  host.querySelectorAll('.expand').forEach(b => b.onclick = () => toggleTrailRow(host, trail, +b.dataset.i));
+}
+
+async function toggleTrailRow(host, trail, i) {
+  const e = trail[i];
+  const expandRow = host.querySelector('.trailexpand[data-i="' + i + '"]');
+  const cell = expandRow.querySelector('td');
+  const open = !expandRow.classList.contains('hidden');
+  if (open) { expandRow.classList.add('hidden'); return; }
+  // Collapse any other open row first — one detail view at a time.
+  host.querySelectorAll('.trailexpand').forEach(r => r.classList.add('hidden'));
+  expandRow.classList.remove('hidden');
+
+  if (e.type === 'received') {
+    cell.innerHTML = e.snippet ? '<div class="trailbody">' + esc(e.snippet) + '</div>'
+      : '<p class="hint">No preview stored for this message.</p>';
+    return;
+  }
+
+  cell.innerHTML = '<p class="hint">Loading the exact email that was sent…</p>';
+  try {
+    const r = await fetch('/api/body?id=' + encodeURIComponent(e.id)).then(x => x.json());
+    const bodyHtml = (r.ok && r.body) ? r.body
+      : '<p class="hint">The body was not recorded for this send — it predates body logging.</p>';
+    cell.innerHTML = (e.error ? '<p class="msg bad">' + esc(e.error) + '</p>' : '')
+      + (e.attachments && e.attachments.length
+          ? '<p class="hint"><b>Attachments:</b> ' + e.attachments.map(esc).join(', ') + '</p>' : '')
+      + '<div class="preview">' + bodyHtml + '</div>';
+  } catch (err) {
+    cell.innerHTML = '<p class="msg bad">Could not reach the server: ' + esc(err.message) + '</p>';
+  }
 }
 
 /* ================= SECTION 5 — replies =================
@@ -1815,11 +1879,6 @@ async function openThread(p) {
 
 let replyCache = [];          // everything the last scan found
 let replyFilter = 'reply';    // which tile is pressed
-
-const KIND_LABEL = {
-  reply: 'Replied', ooo: 'Out of office', bounce: 'Bounced',
-  unsubscribe: 'Unsubscribed', none: 'No reply', auto: 'Bulk mail',
-};
 
 function renderReplyStats() {
   const n = k => replyCache.filter(r => r.kind === k).length;
