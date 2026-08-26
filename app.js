@@ -31,7 +31,7 @@ function newSession(email) {
     /* Off by default — see the checkbox's own label in Section 1 for why:
        this trades a real network round-trip (and its own failure mode)
        before every send for fresher suppression. "Scan for replies" in
-       Section 5 does the same thing on demand for anyone who'd rather not
+       Section 6 does the same thing on demand for anyone who'd rather not
        pay that cost automatically. */
     autoScanOnSend: false,
   };
@@ -196,8 +196,8 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
   t.classList.add('active');
   $(t.dataset.tab).classList.add('active');
-  if (t.dataset.tab === 's4') { loadAnalytics(); loadCampaigns(); }
-  if (t.dataset.tab === 's5') loadCampaigns();
+  if (t.dataset.tab === 's5') { loadAnalytics(); loadCampaigns(); }
+  if (t.dataset.tab === 's6') loadCampaigns();
 });
 
 function say(el, text, ok) {
@@ -547,8 +547,8 @@ let footerImage = null;   // { filename, content(base64), mime }
 
 const editor = $('composeEditor');
 
-/* The rich-text editor is a shared component: Section 3 composes the campaign
-   and Section 5 composes the follow-up, each with its own toolbar. So the
+/* The rich-text editor is a shared component: Section 4 composes the campaign
+   and Section 6 composes the follow-up, each with its own toolbar. So the
    saved selection tracks WHICH editor was last focused, and a toolbar button
    restores into that one — otherwise every button would silently act on the
    compose editor no matter where the cursor was. */
@@ -699,7 +699,7 @@ function fill(tpl, r) {
 }
 
 $('composeBtnPreview').onclick = () => {
-  if (!recipients.length) return say($('composeMsg'), 'Parse some recipients first (Section 2).', false);
+  if (!recipients.length) return say($('composeMsg'), 'Parse some recipients first (Section 3).', false);
   const r = recipients[0], p = $('preview');
   p.classList.remove('hidden');
   const img = footerImage
@@ -746,7 +746,7 @@ window.addEventListener('beforeunload', e => {
 });
 
 /* Most recent delivered email for each of the given addresses, taken from the
-   log already loaded into Section 4. */
+   log already loaded into Section 5. */
 function previousSendsFor(emails) {
   const want = new Set(emails);
   const out = {};
@@ -838,7 +838,7 @@ function readFileB64(file) {
 $('composeBtnSend').onclick = async () => {
   const c = creds();
   if (!c.gUser || !c.gPass) return say($('composeMsg'), 'Add your Gmail + app password in Section 1.', false);
-  if (!recipients.length) return say($('composeMsg'), 'No recipients — parse them in Section 2.', false);
+  if (!recipients.length) return say($('composeMsg'), 'No recipients — parse them in Section 3.', false);
 
   // Final de-duplication guard, in case rows were edited after parsing.
   const uniq = new Map();
@@ -866,7 +866,7 @@ $('composeBtnSend').onclick = async () => {
       + (repeats.length > 5 ? '\n…and ' + (repeats.length - 5) + ' more' : '')
       + '\n\nOK = skip them and send to the other ' + (recipients.length - repeats.length)
       + '\nCancel = send to everyone anyway (they get it twice)'
-      + '\n\nTo read the exact email they received, cancel and open Section 4, then View.');
+      + '\n\nTo read the exact email they received, cancel and open Section 5, then View.');
     if (answer) {
       recipients = recipients.filter(r => !delivered.has(r.email));
       renderRecipients();
@@ -884,7 +884,7 @@ $('composeBtnSend').onclick = async () => {
   if (!confirm('Send to ' + recipients.length + ' recipient(s)?')) return;
 
   /* Start a real campaign row before sending anything. Without this, every
-     send in this loop would persist with campaign_id = NULL: Section 4 would
+     send in this loop would persist with campaign_id = NULL: Section 5 would
      never list the run, and store.followupCandidates() — which requires a
      real campaignId — could never find anyone to follow up with afterwards. */
   let campaignId = null;
@@ -966,7 +966,7 @@ $('composeBtnSend').onclick = async () => {
     }
     if (entry.status === 'sent') sent++; else failed++;
     localLog(entry);
-    loadAnalytics();   // Section 4 updates live, not just at the end
+    loadAnalytics();   // Section 5 updates live, not just at the end
 
     $('composeBar').style.width = ((i + 1) / total * 100) + '%';
     $('composeProgressText').textContent = (i + 1) + ' / ' + total + ' · ' + sent + ' delivered · ' + failed + ' failed'
@@ -994,7 +994,7 @@ $('composeBtnSend').onclick = async () => {
   $('composeBtnStop').classList.add('hidden');
   say($('composeMsg'),
     (stopped ? '■ Stopped — ' : '✓ Finished — ') + sent + ' delivered, ' + failed + ' failed.'
-      + (stopped || failed ? ' Use "Skip already-sent" in Section 2 before resuming.' : ''),
+      + (stopped || failed ? ' Use "Skip already-sent" in Section 3 before resuming.' : ''),
     !stopped && failed === 0);
   $('composeBtnSend').disabled = false;
   renderAccountList();
@@ -1003,7 +1003,7 @@ $('composeBtnSend').onclick = async () => {
 };
 
 /* ---------- live mail-window header ----------
-   The From and To lines mirror what Section 1 and Section 2 hold, so the
+   The From and To lines mirror what Section 1 and Section 3 hold, so the
    compose window always shows who the message is actually going out as. */
 function refreshComposeHeader() {
   const from = $('gUser') ? $('gUser').value.trim() : '';
@@ -1107,18 +1107,18 @@ async function loadCampaigns() {
    from there. The button reports progress throughout rather than sitting
    inert, because a silent multi-second wait reads as a broken control.
 
-   Deliberately still one page-wide flag, unlike sending: Section 5 is one
+   Deliberately still one page-wide flag, unlike sending: Section 6 is one
    shared scan button and one shared result list, not one instance per
-   account the way Section 3/5's mail windows are — so there is only ever
+   account the way Section 4/6's mail windows are — so there is only ever
    one scan control on screen regardless of how many accounts are saved.
    Making this per-account would block a second scan from a DIFFERENT
    account without actually letting two scans run through this one shared
-   UI at once; the real fix is duplicating Section 5 per account (like
+   UI at once; the real fix is duplicating Section 6 per account (like
    compose/follow-up already are), which is a larger change than this flag. */
 let scanning = false;
 
 /**
- * The same reply scan Section 5's button runs, but headless — no DOM
+ * The same reply scan Section 6's button runs, but headless — no DOM
  * writes, no UI feedback beyond what the caller chooses to show — for the
  * "scan this account before sending" opt-in toggle in Section 1. Runs to
  * completion (resuming across the server's own budget the same way the UI
@@ -1313,7 +1313,7 @@ async function sendFollowup() {
 
   /* The follow-up must be sent — and authenticated — as the account that
      OWNS this campaign, not whichever account happens to be active in
-     Section 1. campaignCache is the combined cross-account list (Section 4
+     Section 1. campaignCache is the combined cross-account list (Section 5
      defaults to showing every saved account together), so the campaign
      picker here can easily list a campaign belonging to a different
      account than the one currently showing in Section 1. Using the wrong
@@ -1593,7 +1593,7 @@ function fmtWhen(isoStr) {
 }
 
 /* ---------- "due for follow-up" — a review-and-confirm list, not a scheduler ----------
-   Both "send follow-up now" (Section 5, one click, one campaign) and this
+   Both "send follow-up now" (Section 6, one click, one campaign) and this
    "what's due across everything" view exist side by side on purpose — this
    app has no server-side cron and credentials are never stored server-side,
    so "automated" here can only ever mean "one click surfaces everyone
@@ -1649,11 +1649,11 @@ async function checkDueFollowups() {
 
     $('dueList').querySelectorAll('.review').forEach(b => b.onclick = () => {
       /* Hands off to the exact same manual "send follow-up" flow in
-         Section 5 — this view only ever finds candidates and stops; the
+         Section 6 — this view only ever finds candidates and stops; the
          actual send is still the one-click confirm that already exists. */
       const target = due.find(d => String(d.campaign.id) === b.dataset.id);
       if (!target) return;
-      document.querySelector('[data-tab="s5"]').click();
+      document.querySelector('[data-tab="s6"]').click();
       campaignCache = r.campaigns;
       fillFollowupCampaigns();
       $('fuCampaign').value = target.campaign.id;
@@ -1673,7 +1673,7 @@ function renderCampaigns() {
   if (!tb) return;
   if (!campaignCache.length) {
     tb.innerHTML = '<tr><td colspan="10">No campaigns yet. '
-      + 'Send one from Section 3, or import a past campaign from your Sent folder.</td></tr>';
+      + 'Send one from Section 4, or import a past campaign from your Sent folder.</td></tr>';
     return;
   }
   tb.innerHTML = campaignCache.map(function (c, i) {
@@ -1777,7 +1777,7 @@ function personLabel(p) {
   return p.contacts > 1 ? p.contacts + ' contacts' : 'no reply';
 }
 
-/* Shared with Section 5's reply list further down — one label per reply
+/* Shared with Section 6's reply list further down — one label per reply
    kind, defined here since the thread table (right below) is the first
    thing in file order to need it. */
 const KIND_LABEL = {
@@ -2111,11 +2111,12 @@ if ($('btnImportScan')) $('btnImportScan').onclick = async () => {
   if (!s || !s.gPass) return say($('importMsg'), 'That account has no saved App Password — add it in Section 1 first.', false);
 
   const query = $('impQuery').value.trim();
+  const to = $('impTo').value.trim();
   const since = $('impSince').value || null;
   const until = $('impUntil').value || null;
   const pasted = $('impPasted').value.trim();
-  if (!query && !since && !pasted) {
-    if (!confirm('No search text or start date given — this will list everything in the last 90 days. Continue?')) return;
+  if (!query && !to && !since && !pasted) {
+    if (!confirm('No search text, recipient or start date given — this will list everything in the last 90 days. Continue?')) return;
   }
 
   importUser = user;
@@ -2124,6 +2125,7 @@ if ($('btnImportScan')) $('btnImportScan').onclick = async () => {
   say($('importMsg'), 'Searching Sent folder…', true);
   $('importResults').innerHTML = '';
   $('importPreview').classList.add('hidden');
+  $('impToCaveat').textContent = '';
 
   try {
     let cursor = null, rounds = 0, examined = 0, total = 0;
@@ -2136,16 +2138,18 @@ if ($('btnImportScan')) $('btnImportScan').onclick = async () => {
        across pages instead of overwriting, combining recipient/uid lists
        for a key seen on more than one page. */
     const byKey = new Map();
+    let bccCaveat = false;
     do {
       const r = await fetch('/api/import', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'scan', user, pass: s.gPass,
-          query: query || null, since, until, pasted: pasted || null, cursor,
+          query: query || null, to: to || null, since, until, pasted: pasted || null, cursor,
         }),
       }).then(x => x.json());
       if (!r.ok) { say($('importMsg'), (r.error || 'Search failed') + (r.hint ? ' — ' + r.hint : ''), false); break; }
       mailbox = r.mailbox;
+      if (r.bccCaveat) bccCaveat = true;
       (r.clusters || []).forEach(c => {
         const prev = byKey.get(c.key);
         if (!prev) { byKey.set(c.key, c); return; }
@@ -2155,6 +2159,7 @@ if ($('btnImportScan')) $('btnImportScan').onclick = async () => {
         prev.recipientCount = prev.recipients.length;
         prev.count += c.count;
         prev.alreadyImported = (prev.alreadyImported || 0) + (c.alreadyImported || 0);
+        prev.bccInCluster = prev.bccInCluster || c.bccInCluster;
         if (String(c.firstAt) < String(prev.firstAt)) prev.firstAt = c.firstAt;
         if (String(c.lastAt) > String(prev.lastAt)) prev.lastAt = c.lastAt;
       });
@@ -2171,6 +2176,20 @@ if ($('btnImportScan')) $('btnImportScan').onclick = async () => {
     say($('importMsg'), importClusters.length
       ? importClusters.length + ' candidate campaign(s) found.'
       : 'Nothing matched. Try a wider date range or a shorter search fragment.', importClusters.length > 0);
+
+    /* A search by recipient email can only ever see the To: header — a real
+       BCC send never carries that address in any header a Sent-folder copy
+       keeps, so this is said plainly rather than letting "nothing found"
+       read as "definitely never contacted." */
+    if (bccCaveat) {
+      $('impToCaveat').textContent = importClusters.length
+        ? 'Note: this search only sees the To: header — if ' + to + ' was BCC’d on a campaign, '
+          + 'it may be sitting in one of these results without being named as a recipient, or may not '
+          + 'be found at all. Preview a result to check who it actually names.'
+        : to + ' was not found in the To: header of anything in this range — but a BCC’d send to '
+          + 'them would not show up here either. Try searching by subject/body text instead if you '
+          + 'know roughly what the campaign said.';
+    }
   } catch (e) {
     say($('importMsg'), 'Could not reach the server: ' + e.message, false);
   } finally {
@@ -2200,6 +2219,9 @@ function renderImportClusters() {
       + (c.mergeSuggestions && c.mergeSuggestions.length
           ? '<br/><span class="hint">💡 might be the same campaign as: '
             + c.mergeSuggestions.map(s => '"' + esc(s.subject) + '" (' + esc(s.reason) + ')').join('; ') + '</span>'
+          : '')
+      + (c.bccInCluster
+          ? '<br/><span class="hint warn">contains a message with hidden (BCC) recipients — preview to see who it actually names</span>'
           : '') + '</td>'
       + '<td>' + c.recipientCount + '</td>'
       + '<td>' + esc(humanSpan(c.spanMs)) + '</td>'
@@ -2270,7 +2292,7 @@ async function commitImportCluster(cluster) {
 
     say($('importMsg'), 'Imported ' + r.added + ' send(s)'
       + (r.skipped ? ', ' + r.skipped + ' skipped (duplicates or hidden BCC recipients)' : '')
-      + '. Now scan for replies (Section 5) before sending any follow-up.', true);
+      + '. Now scan for replies (Section 6) before sending any follow-up.', true);
     $('importPreview').classList.add('hidden');
     campaignCache = [];
     loadCampaigns();

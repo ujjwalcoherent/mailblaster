@@ -376,22 +376,32 @@ References between the imported messages themselves — so `GET
 correctly immediately after import, and a follow-up sent afterward threads
 onto the latest round rather than the very first message.
 
-### Finding a campaign by date range and subject-or-body text
+### Finding a campaign by date range, subject-or-body text, or recipient
 
 `scan` additionally accepts:
 
 ```json
 { "action": "scan", "user": "...", "pass": "...",
   "since": "2026-08-21", "until": "2026-08-26",
-  "query": "great meeting at the event" }
+  "query": "great meeting at the event",
+  "to": "person@company.com" }
 ```
 
 | Field | Meaning |
 |---|---|
 | `since` / `until` | Plain `YYYY-MM-DD` calendar dates. Take priority over the older relative `days` lookback when given. |
 | `query` | Free text searched against **subject OR body**, server-side, in the same IMAP round trip — not a separate fetch-and-filter pass. |
+| `to` | Find every campaign ever sent to this recipient — an IMAP `TO` search, server-side. |
 
-Two things worth knowing before relying on this:
+The response adds:
+
+| Field | Meaning |
+|---|---|
+| `matchedVia` | Which of `subject`/`query`/`to`/`since`/`until` were actually part of this search, so a UI can say plainly what was and wasn't searched. |
+| `bccCaveat` | `true` when `to` was used — see the caveat below. |
+| `clusters[].bccInCluster` | This particular cluster (only present when `to` was used) contains at least one message with hidden recipients, so it may or may not actually include the person searched for. |
+
+Four things worth knowing before relying on this:
 
 - IMAP's `SINCE`/`BEFORE` disregard time-of-day and timezone entirely (RFC
   3501) — they compare calendar days only. `until` is pushed to the day
@@ -399,8 +409,23 @@ Two things worth knowing before relying on this:
   "through today" would silently exclude anything sent today.
 - `query` exists because subject matching alone misses real cases: "Great
   meeting at the event India Health 2026" and "Great meeting at the event"
-  share no exact subject, but a body-inclusive text search on the invariant
-  fragment ("great meeting at the event") finds both.
+  share no exact subject as strings — but as of the word-overlap upgrade to
+  `lib/importer.js`'s `cluster()`, they now land in the same cluster on
+  subject alone too (80%+ of the shorter subject's words present, in order,
+  in the longer one); `query`'s server-side body search remains useful on
+  top of that for campaigns whose subject varied more than a trailing
+  fragment.
+- `to` is an IMAP `TO` search: it matches the `To:` header only. A real BCC
+  send never puts that address in any header a Sent-folder copy has to
+  keep, so **`to` cannot find a purely-BCC'd recipient at all** — a search
+  returning nothing does not mean that person was never contacted, only
+  that they weren't in a `To:` line in this date range. `bccCaveat`/
+  `bccInCluster` exist so a caller can say this plainly instead of letting
+  "nothing found" read as "definitely never contacted."
+- A cluster's confidence and reason (`lib/importer.js`) still speak to
+  whether the group of messages looks like a real mail-merge burst, not to
+  whether a `to` search actually named the person being searched for
+  everywhere in that cluster — those are two independent questions.
 
 ---
 

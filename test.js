@@ -277,6 +277,47 @@ async function importerTests() {
     assert.strictEqual(normaliseSubject('Re: Our new range'), normaliseSubject('Our new range'));
     assert.strictEqual(normaliseSubject('Fwd: Our new range'), normaliseSubject('Our new range'));
   });
+  await test('a trailing variable fragment joins the same cluster as the bare template', () => {
+    // "...at India Health 2026" vs "...at the event" with no trailing detail at all.
+    const c = cluster([
+      M('Great meeting at the event India Health 2026', 'a@x.com', '2026-08-01T09:00:00Z', 1),
+      M('Great meeting at the event India Health 2026', 'b@y.com', '2026-08-01T09:00:14Z', 2),
+      M('Great meeting at the event', 'c@z.com', '2026-08-01T09:00:28Z', 3),
+    ]);
+    assert.strictEqual(c.length, 1, 'a trailing fragment must not split the cluster');
+    assert.strictEqual(c[0].recipientCount, 3);
+  });
+  await test('a leading variable fragment also joins, not just trailing', () => {
+    const c = cluster([
+      M('India Health 2026 — great meeting at the event', 'a@x.com', '2026-08-01T09:00:00Z', 1),
+      M('great meeting at the event', 'b@y.com', '2026-08-01T09:00:14Z', 2),
+      M('great meeting at the event', 'c@z.com', '2026-08-01T09:00:28Z', 3),
+    ]);
+    assert.strictEqual(c.length, 1);
+    assert.strictEqual(c[0].recipientCount, 3);
+  });
+  await test('genuinely different subjects still cluster separately', () => {
+    const c = cluster([
+      M('Our new range', 'a@x.com', '2026-08-01T09:00:00Z', 1),
+      M('Our new range', 'b@y.com', '2026-08-01T09:00:14Z', 2),
+      M('Our new range', 'c@z.com', '2026-08-01T09:00:28Z', 3),
+      M('Invoice overdue', 'd@x.com', '2026-08-01T09:05:00Z', 4),
+      M('Invoice overdue', 'e@y.com', '2026-08-01T09:05:14Z', 5),
+      M('Invoice overdue', 'f@z.com', '2026-08-01T09:05:28Z', 6),
+    ]);
+    assert.strictEqual(c.length, 2, 'unrelated subjects must not merge just because both are short');
+  });
+  await test('word order still matters — a scrambled subject does not silently merge', () => {
+    const c = cluster([
+      M('quarterly report for finance team', 'a@x.com', '2026-08-01T09:00:00Z', 1),
+      M('quarterly report for finance team', 'b@y.com', '2026-08-01T09:00:14Z', 2),
+      M('quarterly report for finance team', 'c@z.com', '2026-08-01T09:00:28Z', 3),
+      M('team finance for report quarterly', 'd@x.com', '2026-08-01T09:05:00Z', 4),
+      M('team finance for report quarterly', 'e@y.com', '2026-08-01T09:05:14Z', 5),
+      M('team finance for report quarterly', 'f@z.com', '2026-08-01T09:05:28Z', 6),
+    ]);
+    assert.strictEqual(c.length, 2, 'reordered words are a different subject, not the same template');
+  });
 
   group('importer — expanding from one pasted email');
   await test('full headers give the Message-Id', () => {

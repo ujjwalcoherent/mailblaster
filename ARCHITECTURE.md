@@ -129,7 +129,7 @@ happens to be the one showing in Section 1 by the time a later iteration
 runs. Section 1 itself becomes a list of account cards rather than one form;
 editing an account swaps which session the shared form is currently a view
 of, the same way the mail-window template is one definition cloned per
-purpose. Section 4's campaign list defaults to showing every saved account
+purpose. Section 5's campaign list defaults to showing every saved account
 together (an empty `owner` on `/api/campaigns` already meant "everyone" —
 the browser just never asked for it that way before), so checking on several
 running campaigns doesn't mean switching accounts one at a time.
@@ -143,14 +143,14 @@ Google's own limit made worth surfacing before it's hit rather than after.
 
 ### "Due for follow-up" is a review-and-confirm list, not a scheduler
 
-Section 4 has a button that checks every finished campaign, across every
+Section 5 has a button that checks every finished campaign, across every
 saved account, against how long ago it ran, and for anyone that check
 actually flags, re-verifies with `/api/followup` that a real person is
 still eligible (not suppressed, not still out of office, not already
 chased three times) before calling them "due." That distinction matters:
 being old doesn't mean anyone is left to follow up with.
 
-This exists alongside "Send follow-up now" (Section 5, one campaign, one
+This exists alongside "Send follow-up now" (Section 6, one campaign, one
 click) rather than replacing it, because this app has no server-side cron
 and, by design, never stores an App Password server-side (see "Credentials
 never reach the server's storage," above) — there is nothing that COULD
@@ -260,6 +260,15 @@ sight, not a default anyone has to discover they're paying for.
 
 ## Importing campaigns sent before this tool
 
+This search and import flow is Section 2 — its own screen, positioned
+before Section 3 (Recipients), rather than a sub-heading buried partway
+down the campaign dashboard (Section 5, where it used to live). The reason
+for the ordering: reconstructing a past campaign is naturally a step that
+happens *before* deciding who to email next, not something discovered
+after the fact while looking at campaign history. (Every other section
+shifted up one number to make room: 2→3 Recipients, 3→4 Compose, 4→5
+Campaigns, 5→6 Replies. Section 1, Gmail accounts, is unchanged.)
+
 A user who already ran a campaign by hand can still follow up in-thread,
 because their Sent folder holds everything needed — recipients, subject, body,
 timestamps and the Message-Ids.
@@ -273,6 +282,32 @@ seconds apart; a person writing five emails takes minutes. Several recipients
 with a median gap under two minutes is `high` confidence; the same subject
 hours apart is `medium`, surfaced with the reason attached rather than silently
 imported.
+
+**Subjects cluster by word overlap, not exact-string equality.** A template
+often carries a variable fragment beyond what greeting-stripping removes —
+"Great meeting at the event India Health 2026" vs "Great meeting at the
+event" — so `cluster()`'s grouping key was never the right tool: two
+otherwise-identical subjects that differ by a trailing or leading fragment
+have no shared exact-string key at all. `subjectSimilarity()` instead checks
+whether the SHORTER subject's words all appear, in the same relative order,
+somewhere in the longer one (an ordered-subsequence check, not just "same
+words in any order" — "quarterly report for finance" and "finance report for
+quarterly" share every word but are a different subject, not the same
+template reordered). 80%+ overlap joins a group; each group's anchor is
+whichever subject got there first, and later messages join by overlap
+against that anchor rather than by chaining pairwise, so drift across many
+small edits can't silently link two genuinely unrelated subjects one hop at
+a time. This runs first, deterministically, for every scan; the DeepSeek
+layer below only ever sees what this couldn't already resolve.
+
+**A campaign can also be found by recipient, not just subject/body/date.**
+`to` in `POST /api/import`'s `scan` action is a straight IMAP `TO` search.
+The one real caveat: IMAP's `TO` criterion matches the `To:` header only —
+a genuine BCC send never puts that address in any header a Sent-folder copy
+keeps, so this search cannot see a purely-BCC'd recipient at all. The scan
+response says so plainly (`matchedVia`, `bccCaveat`, per-cluster
+`bccInCluster`) rather than letting an empty result read as "this person was
+never contacted" when it may only mean "not in a `To:` line in this range."
 
 **The template is rebuilt by diffing bodies.** What is identical everywhere is
 the template; what varies is a merge field. A fragment is only called
@@ -355,9 +390,6 @@ run, not a hypothetical.)
 
 ## Known gaps
 
-- **Section 2 predates the visual rework** in 3, 4 and 5 (its recipient
-  parsing is unchanged; Section 1 has since been redone as the multi-account
-  list).
 - **The DeepSeek fuzzy-matching layer (`lib/llm.js`) has not been exercised
   live.** It's fully built and tested — cost math checked against DeepSeek's
   published pricing, the whole module confirmed to no-op safely with no key

@@ -143,6 +143,20 @@ async function scan(b, res) {
     }
   }
 
+  /* IMAP's TO criterion only ever matches the To: header — it cannot see a
+     Bcc: recipient, because a real BCC send never puts that address in any
+     header a server (or a Sent-folder copy) has to keep. So a search by
+     recipient email can miss someone entirely if they were only ever
+     BCC'd, and this has to be said plainly rather than silently returning
+     "nothing found" as if that were the same as "definitely never
+     contacted." Every cluster in these results is flagged if it also
+     contains any BCC-likely message (recipients hidden), since that
+     cluster's real recipient list may include the person being searched
+     for even though the match came from elsewhere in the burst. */
+  if (b.to) {
+    clusters.forEach(c => { c.bccInCluster = result.messages.some(m => c.uids.includes(m.uid) && m.bccLikely); });
+  }
+
   log.info('import_scan', {
     mailbox: result.mailbox, examined: result.examined,
     clusters: clusters.length, done: result.done,
@@ -152,6 +166,8 @@ async function scan(b, res) {
     ok: true, mailbox: result.mailbox, examined: result.examined,
     total: result.total, done: result.done, cursor: result.cursor,
     pasted, clusters,
+    matchedVia: { subject: !!subject, query: !!b.query, to: !!b.to, since: !!since, until: !!until },
+    bccCaveat: !!b.to,   // whether this scan's `to` search cannot see BCC-only recipients
   });
 }
 

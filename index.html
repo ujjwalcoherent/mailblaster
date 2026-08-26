@@ -12,10 +12,11 @@
   <div class="brand">📮 <span>MailBlaster</span></div>
   <nav class="tabs">
     <button class="tab active" data-tab="s1">1 · Gmail</button>
-    <button class="tab" data-tab="s2">2 · Recipients</button>
-    <button class="tab" data-tab="s3">3 · Compose</button>
-    <button class="tab" data-tab="s4">4 · Campaigns</button>
-    <button class="tab" data-tab="s5">5 · Replies</button>
+    <button class="tab" data-tab="s2">2 · Reconstruct</button>
+    <button class="tab" data-tab="s3">3 · Recipients</button>
+    <button class="tab" data-tab="s4">4 · Compose</button>
+    <button class="tab" data-tab="s5">5 · Campaigns</button>
+    <button class="tab" data-tab="s6">6 · Replies</button>
   </nav>
 </header>
 
@@ -23,7 +24,7 @@
 
 <!-- ============================================================
      MAIL WINDOW TEMPLATE
-     Cloned by app.js into Section 3 (compose) and Section 5
+     Cloned by app.js into Section 4 (compose) and Section 6
      (follow-up). Defined once so the two windows cannot drift
      apart: same toolbar, same signature and attachment blocks,
      same send bar. Per-instance ids are stamped on from the
@@ -143,9 +144,9 @@
      so several can send at once in this tab.</p>
 
   <!-- One card per saved account. Rendered by app.js; the account whose card
-       is expanded is the one the form below edits and the one Sections 2-5
+       is expanded is the one the form below edits and the one Sections 3-6
        currently act on. Concurrent accounts each get their own mail-window
-       mount (Section 3/5), keyed by account id, so two sends never share
+       mount (Section 4/6), keyed by account id, so two sends never share
        state. -->
   <div id="accountList" class="accountlist"></div>
   <div class="row">
@@ -182,7 +183,7 @@
   <label class="inline"><input id="remember" type="checkbox" checked/> Remember on this browser (stored locally)</label>
 
   <label class="inline"><input id="autoScanOnSend" type="checkbox"/> Scan this account's inbox for replies before every send
-    <small class="hint">Off by default: this adds a real network round-trip before every campaign or follow-up starts, and if the scan itself is slow or fails, so does the delay before sending. "Scan for replies" in Section 5 does the same thing on demand — this just does it automatically for this one account.</small>
+    <small class="hint">Off by default: this adds a real network round-trip before every campaign or follow-up starts, and if the scan itself is slow or fails, so does the delay before sending. "Scan for replies" in Section 6 does the same thing on demand — this just does it automatically for this one account.</small>
   </label>
 
   <details class="msection" id="apiKeyBox">
@@ -208,9 +209,54 @@
   </div>
 </section>
 
-<!-- ============ SECTION 2 : RECIPIENTS + SALUTATIONS ============ -->
+<!-- ============ SECTION 2 : RECONSTRUCT A PAST CAMPAIGN ============ -->
 <section id="s2" class="panel">
-  <h2>Section 2 — Recipients &amp; Salutations</h2>
+  <h2>Section 2 — Reconstruct a past campaign</h2>
+  <p class="hint">Find a campaign you already sent — before this tool, in another tool, or one that
+     didn't get logged here — directly from a saved account's Sent folder, so a follow-up can thread
+     onto the real conversation instead of arriving as a new, unrelated email. Search by subject text,
+     the recipient's email, a date range, or any combination; leave everything blank to just browse by
+     date. Do this <b>before</b> Section 3 (Recipients) if the people you're about to email are the
+     same ones from a campaign you want to pick up from.</p>
+
+  <div class="grid2">
+    <label>Search this account
+      <select id="impUser"><option value="">— choose a saved account —</option></select>
+    </label>
+    <label>Subject or body text <small>leave blank to search by recipient/date only</small>
+      <input id="impQuery" type="text" placeholder="great meeting at the event"/>
+    </label>
+    <label>Recipient's email <small>find every campaign ever sent to this person</small>
+      <input id="impTo" type="email" placeholder="person@company.com"/>
+    </label>
+    <label>From date
+      <input id="impSince" type="date"/>
+    </label>
+    <label>To date <small>defaults to today</small>
+      <input id="impUntil" type="date"/>
+    </label>
+  </div>
+  <p class="hint" id="impToCaveat"></p>
+
+  <details class="msection" id="impPasteBox">
+    <summary>Paste one of the emails instead <small>uses its subject/Message-Id to seed the search</small></summary>
+    <div class="msectionbody">
+      <textarea id="impPasted" rows="6" placeholder="Paste the full email (headers and all, if you have them) or just its subject line"></textarea>
+    </div>
+  </details>
+
+  <div class="row">
+    <button id="btnImportScan" class="primary">Search Sent folder</button>
+    <span id="importMsg" class="msg" role="status" aria-live="polite"></span>
+  </div>
+
+  <div id="importResults"></div>
+  <div id="importPreview" class="hidden"></div>
+</section>
+
+<!-- ============ SECTION 3 : RECIPIENTS + SALUTATIONS ============ -->
+<section id="s3" class="panel">
+  <h2>Section 3 — Recipients &amp; Salutations</h2>
   <p class="hint">Paste email IDs in any format — commas, spaces, new lines, or copied from a sheet.
      Names are parsed from the email ID itself and used as <span class="mono">{{name}}</span>.</p>
 
@@ -238,9 +284,9 @@ info@somecompany.com"></textarea>
   </div>
 </section>
 
-<!-- ============ SECTION 3 : COMPOSE ============ -->
-<section id="s3" class="panel">
-  <h2>Section 3 — Compose</h2>
+<!-- ============ SECTION 4 : COMPOSE ============ -->
+<section id="s4" class="panel">
+  <h2>Section 4 — Compose</h2>
   <!-- The mail window is cloned in here from #mailWindowTpl with the prefix
        "compose", producing ids like composeSubject, composeEditor, composeFiles. -->
   <div class="mailmount" data-prefix="compose" data-mode="campaign"></div>
@@ -250,15 +296,15 @@ info@somecompany.com"></textarea>
   <div id="preview" class="preview hidden"></div>
 </section>
 
-<!-- ============ SECTION 4 : ANALYTICS ============ -->
-<section id="s4" class="panel">
-  <h2>Section 4 — Campaigns &amp; history</h2>
+<!-- ============ SECTION 5 : ANALYTICS ============ -->
+<section id="s5" class="panel">
+  <h2>Section 5 — Campaigns &amp; history</h2>
   <p class="hint" id="logSource">Source: —</p>
 
   <h3>Due for follow-up</h3>
   <p class="hint">Every finished campaign checked against how long it's been since it ran, across
      every saved account — a due-list you review and act on, not a scheduler that sends anything by
-     itself. Sending still always happens as a deliberate click in Section 5, the same as
+     itself. Sending still always happens as a deliberate click in Section 6, the same as
      "Send follow-up now"; this just tells you who's due without checking each campaign by hand.</p>
   <div class="row">
     <label class="inline">Flag campaigns finished more than
@@ -295,43 +341,6 @@ info@somecompany.com"></textarea>
        campaign is opened, so the list stays the default view. -->
   <div id="campDetail" class="hidden"></div>
 
-  <h3>Find campaigns sent before this tool, or that don't quite match by subject</h3>
-  <p class="hint">Searches the Sent folder of the account below directly — not this app's own
-     history — so a follow-up can thread onto mail sent by hand, in another tool, or under a
-     slightly different subject line each time (e.g. some recipients got
-     <i>"...at India Health 2026"</i>, others just <i>"...at the event"</i>). Matching either the
-     subject or the body text, in a date range, catches both.</p>
-
-  <div class="grid2">
-    <label>Search this account
-      <select id="impUser"><option value="">— choose a saved account —</option></select>
-    </label>
-    <label>Text to search for <small>subject or body — leave blank to browse by date only</small>
-      <input id="impQuery" type="text" placeholder="great meeting at the event"/>
-    </label>
-    <label>From date
-      <input id="impSince" type="date"/>
-    </label>
-    <label>To date <small>defaults to today</small>
-      <input id="impUntil" type="date"/>
-    </label>
-  </div>
-
-  <details class="msection" id="impPasteBox">
-    <summary>Paste one of the emails instead <small>uses its subject/Message-Id to seed the search</small></summary>
-    <div class="msectionbody">
-      <textarea id="impPasted" rows="6" placeholder="Paste the full email (headers and all, if you have them) or just its subject line"></textarea>
-    </div>
-  </details>
-
-  <div class="row">
-    <button id="btnImportScan" class="primary">Search Sent folder</button>
-    <span id="importMsg" class="msg" role="status" aria-live="polite"></span>
-  </div>
-
-  <div id="importResults"></div>
-  <div id="importPreview" class="hidden"></div>
-
   <h3>Sent log</h3>
   <div class="row">
     <button id="btnRefresh" class="primary">Refresh</button>
@@ -359,9 +368,9 @@ info@somecompany.com"></textarea>
   </div>
 </section>
 
-<!-- ============ SECTION 5 : REPLIES ============ -->
-<section id="s5" class="panel">
-  <h2>Section 5 — Replies, out-of-office &amp; bounces</h2>
+<!-- ============ SECTION 6 : REPLIES ============ -->
+<section id="s6" class="panel">
+  <h2>Section 6 — Replies, out-of-office &amp; bounces</h2>
   <p class="hint">Scans the inbox of the Gmail account in Section 1 over IMAP, using the same
      App Password. Nothing is stored on the server &mdash; the password stays in this browser.</p>
 
@@ -429,7 +438,7 @@ info@somecompany.com"></textarea>
        hard-bounced, or is still marked out-of-office.</p>
   </fieldset>
 
-  <!-- Same window as Section 3, cloned from the one template with the prefix
+  <!-- Same window as Section 4, cloned from the one template with the prefix
        "fu" and switched to follow-up mode (thread picker + quoted original). -->
   <div class="mailmount" data-prefix="fu" data-mode="followup"></div>
 
