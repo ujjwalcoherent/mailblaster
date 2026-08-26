@@ -8,12 +8,39 @@ body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system
 
 .topbar{position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid var(--line);
   display:flex;align-items:center;gap:24px;padding:10px 22px;flex-wrap:wrap}
-.brand{font-weight:700;font-size:17px}
+.brand{font-weight:700;font-size:17px;flex:none}
 .tabs{display:flex;gap:6px;flex-wrap:wrap}
 .tab{background:transparent;border:1px solid transparent;padding:7px 14px;border-radius:8px;
   cursor:pointer;font-weight:600;color:var(--muted)}
 .tab:hover{background:#eef1f8}
 .tab.active{background:var(--brand);color:#fff}
+/* Accounts/Activity are settings, not steps in the send flow — pinned to
+   the far right so they read as a separate, always-there destination
+   rather than one more thing competing with the step strip for attention. */
+.tabs.persistent{margin-left:auto}
+.tab.linklike{display:inline;background:none;border:none;padding:0;margin:0;
+  font:inherit;font-weight:700;color:var(--brand);text-decoration:underline;cursor:pointer}
+.tab.linklike:hover{color:var(--brand-dk)}
+
+/* The guided send flow: Recipients -> Compose -> Review -> Send. A numbered
+   circle per step, connected by a line, so progress reads at a glance —
+   filled + checked once passed, outlined + bold on the current step,
+   muted for what's ahead. Clicking any step jumps there directly (nothing
+   here blocks going back to fix something, or peeking ahead) — the numbers
+   are a map, not a gate. */
+.wizardsteps{display:flex;align-items:center;gap:2px}
+.wstep{background:none;border:none;cursor:pointer;display:flex;align-items:center;gap:8px;
+  padding:6px 10px;border-radius:8px;font-weight:600;color:var(--muted);font-size:13px;position:relative}
+.wstep:not(:last-child)::after{content:'';width:20px;height:1px;background:var(--line);margin:0 2px}
+.wstep:hover{background:#eef1f8}
+.wstepnum{width:22px;height:22px;border-radius:99px;display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:700;border:1.5px solid var(--line);color:var(--muted);flex:none;background:#fff}
+.wstep.current{color:var(--ink)}
+.wstep.current .wstepnum{border-color:var(--brand);color:var(--brand);background:#eef1fb}
+.wstep.done .wstepnum{background:var(--brand);border-color:var(--brand);color:#fff}
+.wstep.done .wstepnum::before{content:'✓'}
+.wstep.done .wstepnum{font-size:0}
+@media(max-width:860px){.wstep span:not(.wstepnum){display:none} .wstep:not(:last-child)::after{width:10px}}
 
 main{max-width:1040px;margin:0 auto;padding:22px}
 .panel{display:none;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px;

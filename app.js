@@ -210,14 +210,75 @@ mountMailWindows();
 const mw = (prefix, name) => document.getElementById(prefix + name);
 
 /* ---------- tabs ---------- */
-document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+
+/* Shared by every nav control that switches which section shows — the
+   persistent Accounts/Activity buttons (class "tab"), the wizard step
+   strip (class "wstep"), and the in-page "Find that past campaign" /
+   "the Replies screen" links (class "tab", styled inline via "linklike")
+   — so there is exactly one place that knows how to switch panels, not
+   one copy per nav style. */
+function goToSection(tabId) {
   document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
-  t.classList.add('active');
-  $(t.dataset.tab).classList.add('active');
-  if (t.dataset.tab === 's5') { loadAnalytics(); loadCampaigns(); }
-  if (t.dataset.tab === 's6') loadCampaigns();
+  document.querySelectorAll('.tab[data-tab="' + tabId + '"]').forEach(x => x.classList.add('active'));
+  $(tabId).classList.add('active');
+  if (tabId === 's5') { loadAnalytics(); loadCampaigns(); }
+  if (tabId === 's6') loadCampaigns();
+  refreshWizardSteps();
+}
+
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => goToSection(t.dataset.tab));
+document.querySelectorAll('.wstep').forEach(t => t.onclick = () => {
+  goToSection(t.dataset.tab);
+  if (t.dataset.substep === 'review') { composeSubstep = 'review'; scrollToComposePreview(); }
+  else if (t.dataset.substep === 'send') { composeSubstep = 'send'; scrollToComposeSend(); }
+  else if (t.dataset.tab === 's4') composeSubstep = 'compose';
+  refreshWizardSteps();
 });
+
+/* Compose/Review/Send all live in the SAME panel (s4) — they only differ by
+   which part of it you're working on, which the panel id alone can't say.
+   Tracked as one small piece of real state rather than inferred from scroll
+   position (unreliable, and adding an IntersectionObserver just to answer
+   "which section are you looking at" would be real complexity for a purely
+   cosmetic indicator). The wizard strip is the only way into s4 at all
+   (checked: nothing else targets it), so every entry sets this explicitly —
+   there's no other route that could leave it stale. */
+let composeSubstep = 'compose';
+
+/* The step strip's current/done state tracks whichever section is ACTUALLY
+   showing wherever that's unambiguous (Recipients = s3), and composeSubstep
+   for the one panel where it isn't. Every earlier step reads as done once
+   you've moved past it. Accounts (s1) and Activity (s5/s6) aren't part of
+   this sequence at all, so no wizard step lights up for either. */
+function refreshWizardSteps() {
+  const strip = $('wizardSteps');
+  if (!strip) return;
+  const activePanel = document.querySelector('.panel.active');
+  const activeId = activePanel ? activePanel.id : '';
+  const substepOrder = { compose: 2, review: 3, send: 4 };
+  const currentStep = activeId === 's3' ? 1 : activeId === 's4' ? (substepOrder[composeSubstep] || 2) : 0;
+  strip.querySelectorAll('.wstep').forEach(el => {
+    const n = Number(el.dataset.stepnum);
+    el.classList.toggle('done', currentStep > 0 && n < currentStep);
+    el.classList.toggle('current', currentStep > 0 && n === currentStep);
+  });
+}
+refreshWizardSteps();
+
+/* Review and Send aren't separate panels — they're further down the SAME
+   compose panel (s4) — so "jump to this step" means scroll-into-view, not
+   switch panels. Falls back to the compose window's Send button when
+   nothing's been previewed yet, so "Review" is never a dead click before a
+   recipient list exists. */
+function scrollToComposePreview() {
+  const el = $('preview');
+  if (el && !el.classList.contains('hidden')) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  else if ($('composeBtnPreview')) $('composeBtnPreview').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+function scrollToComposeSend() {
+  if ($('composeBtnSend')) $('composeBtnSend').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
 
 function say(el, text, ok) {
   el.textContent = text;
@@ -1036,6 +1097,9 @@ function mountCompose(prefix) {
     const msgEl = $(prefix + 'Msg');
     if (!list.length) return say(msgEl, 'Parse some recipients first.', false);
     renderSinglePreview(prefix, list[0], $('preview'));
+    // Only the default window drives the top wizard strip — extra
+    // multi-account windows are a layer on top of it, not a second wizard.
+    if (prefix === 'compose' && typeof refreshWizardSteps === 'function') { composeSubstep = 'review'; refreshWizardSteps(); }
   };
 
   if ($(prefix + 'BtnStop')) $(prefix + 'BtnStop').onclick = () => {
@@ -1118,6 +1182,7 @@ async function skipAlreadySent() {
  */
 async function sendFromWindow(prefix, opts) {
   opts = opts || {};
+  if (prefix === 'compose' && typeof refreshWizardSteps === 'function') { composeSubstep = 'send'; refreshWizardSteps(); }
   const ownAccount = composeState(prefix).ownAccount;
   const c = ownAccount ? (function () {
     const s = session(ownAccount);

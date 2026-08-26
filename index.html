@@ -10,13 +10,25 @@
 
 <header class="topbar">
   <div class="brand">📮 <span>MailBlaster</span></div>
-  <nav class="tabs">
-    <button class="tab active" data-tab="s1">1 · Gmail</button>
-    <button class="tab" data-tab="s2">2 · Reconstruct</button>
-    <button class="tab" data-tab="s3">3 · Recipients</button>
-    <button class="tab" data-tab="s4">4 · Compose</button>
-    <button class="tab" data-tab="s5">5 · Campaigns</button>
-    <button class="tab" data-tab="s6">6 · Replies</button>
+
+  <!-- The send flow (Recipients -> Compose -> Review -> Send) is one guided
+       path, shown as a step strip, not a flat tab list -- clicking a step
+       jumps straight there (nothing here enforces linear order; the
+       progress read is a guide, not a gate), and the active/done state
+       updates from whichever section is actually showing. Accounts and
+       Activity are NOT steps -- set-up-once and check-on-anytime,
+       respectively -- so they sit apart as persistent nav, always one
+       click away regardless of where the wizard currently is. -->
+  <nav class="wizardsteps" id="wizardSteps">
+    <button class="wstep" data-tab="s3" data-stepnum="1"><span class="wstepnum">1</span>Recipients</button>
+    <button class="wstep" data-tab="s4" data-stepnum="2"><span class="wstepnum">2</span>Compose</button>
+    <button class="wstep" data-tab="s4" data-substep="review" data-stepnum="3"><span class="wstepnum">3</span>Review</button>
+    <button class="wstep" data-tab="s4" data-substep="send" data-stepnum="4"><span class="wstepnum">4</span>Send</button>
+  </nav>
+
+  <nav class="tabs persistent">
+    <button class="tab active" data-tab="s1">Accounts</button>
+    <button class="tab" data-tab="s5">Activity</button>
   </nav>
 </header>
 
@@ -287,9 +299,11 @@
 
 <!-- ============ SECTION 3 : RECIPIENTS + SALUTATIONS ============ -->
 <section id="s3" class="panel">
-  <h2>Section 3 — Recipients &amp; Salutations</h2>
+  <h2>Step 1 — Recipients</h2>
   <p class="hint">Paste email IDs in any format — commas, spaces, new lines, or copied from a sheet.
-     Names are parsed from the email ID itself and used as <span class="mono">{{name}}</span>.</p>
+     Names are parsed from the email ID itself and used as <span class="mono">{{name}}</span>.
+     Following up on something you already sent? <button class="tab linklike" data-tab="s2">Find that past campaign</button>
+     instead, so the reply threads onto it correctly.</p>
 
   <textarea id="rawEmails" rows="8" placeholder="aditya.jha@acme.com, priya_sharma@xyz.in
 rahul.verma99@gmail.com
@@ -367,7 +381,10 @@ info@somecompany.com"></textarea>
 
 <!-- ============ SECTION 5 : ANALYTICS ============ -->
 <section id="s5" class="panel">
-  <h2>Section 5 — Campaigns &amp; history</h2>
+  <h2>Activity — Campaigns &amp; history</h2>
+  <p class="hint">Every campaign that's run, across every saved account. Checking for replies, out-of-office
+     and bounces — and sending a follow-up to whoever's due — happens on
+     <button class="tab linklike" data-tab="s6">the Replies screen</button>.</p>
   <p class="hint" id="logSource">Source: —</p>
 
   <h3>Due for follow-up</h3>
