@@ -382,19 +382,33 @@ function renderAccountList() {
     const progressBar = s.sending && s.progress
       ? '<span class="acctprogress"><i style="width:' + Math.round(s.progress.done / s.progress.total * 100) + '%"></i></span>'
       : '';
-    const quota = s.sentToday && typeof s.sentToday.sent === 'number'
-      ? quotaHtml(s.sentToday) : '';
     // The chip alone just says "error" — a hover title with the actual
     // message means the reason doesn't disappear the moment verifyMsg's
     // text is overwritten by whatever's typed next.
     const errorTitle = (!s.sending && s.lastError) ? ' title="' + esc(s.lastError) + '"' : '';
+    const quotaCell = s.sentToday && typeof s.sentToday.sent === 'number'
+      ? quotaHtml(s.sentToday)
+      : '<span class="hint">checking…</span>';
+
+    // A labelled details grid (From name / Reply-to / SMTP / Sent today),
+    // the same "small muted label above a bold value" shape a real settings
+    // card uses, rather than one flat row where the email, a status word,
+    // and two buttons all fight for the same line at equal visual weight.
     return '<div class="accountcard' + (editing ? ' editing' : '') + '" data-email="' + esc(email) + '">'
+      + '<div class="accounthead">'
       + '<span class="addr">' + esc(email) + '</span>'
       + '<span class="acctstatus ' + status + '"' + errorTitle + '>' + esc(statusLabel) + '</span>'
+      + '</div>'
       + progressBar
-      + quota
+      + '<div class="acctfields">'
+      + '<div class="acctfield"><span class="acctfieldlbl">From name</span><span class="acctfieldval">' + (s.fromName ? esc(s.fromName) : '<span class="hint">not set</span>') + '</span></div>'
+      + '<div class="acctfield"><span class="acctfieldlbl">SMTP port</span><span class="acctfieldval">' + esc(s.smtpPort || '587') + '</span></div>'
+      + '<div class="acctfield"><span class="acctfieldlbl">Sent today</span><span class="acctfieldval">' + quotaCell + '</span></div>'
+      + '</div>'
+      + '<div class="acctactions">'
       + '<button class="edit" data-email="' + esc(email) + '">Edit</button>'
       + '<button class="danger remove" data-email="' + esc(email) + '">Remove</button>'
+      + '</div>'
       + '</div>';
   }).join('');
 
