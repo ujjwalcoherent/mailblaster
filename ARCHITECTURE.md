@@ -111,6 +111,17 @@ The cost: the campaign dies if the tab closes. That is why `beforeunload`
 warns, and why **resume rebuilds the remainder from the database** rather than
 from anything the client remembered.
 
+The pause between sends is a random pick from a min/max range
+(`randomDelay()`, app.js), not one fixed interval repeated for every
+recipient — a constant gap between every message is a mechanical,
+fingerprintable pattern; nothing about real human sending ever lands on
+the exact same interval twice. The range is user-configurable per window
+(default 600–1800ms); the *live progress estimate* ("about Ns left") is
+computed separately, from real elapsed time since the loop started
+divided by sends completed so far — not from the configured range —
+because actual network/API latency per request is part of the real pace
+too, and a range-only estimate would under-count it.
+
 ### Several accounts can send at once, because the database already scoped by account — the browser didn't
 
 The database and every endpoint were always safely multi-tenant: `campaigns`,

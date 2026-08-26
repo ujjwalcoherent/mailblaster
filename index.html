@@ -161,7 +161,13 @@
       <button data-id="BtnSend" class="primary big">Send</button>
       <button data-id="BtnStop" class="danger hidden">Stop</button>
       <button data-id="BtnPreview">Preview</button>
-      <label class="inline delay">Delay <input data-id="DelayMs" type="number" value="800" min="0" step="100" style="width:76px"/> ms</label>
+      <!-- A random delay picked fresh for each send, not a fixed interval —
+           a constant 800ms between every single message is a mechanical,
+           fingerprintable pattern; a real human pauses a different amount
+           each time. Two inputs define the range rather than one fixed
+           number. -->
+      <label class="inline delay">Delay <input data-id="DelayMinMs" type="number" value="600" min="0" step="100" style="width:70px"/>
+        –<input data-id="DelayMaxMs" type="number" value="1800" min="0" step="100" style="width:70px"/> ms (random each send)</label>
       <span data-id="Msg" class="msg" role="status" aria-live="polite"></span>
     </div>
 

@@ -983,7 +983,7 @@ function fill(tpl, r) {
    not a second draft slot. */
 const DRAFT_KEY = 'mailblaster.draft';
 const DRAFT_FIELDS = ['composeSubject', 'composeGreeting', 'composeClosing', 'composeFooterHtml',
-  'fallbackName', 'composeDelayMs', 'rawEmails',
+  'fallbackName', 'composeDelayMinMs', 'composeDelayMaxMs', 'rawEmails',
   'composeFooterImgW', 'composeFooterImgPos', 'composeFooterImgLink'];
 function restoreDraft() {
   try {
@@ -1227,6 +1227,14 @@ async function skipAlreadySent() {
     true);
 }
 
+/* A fresh random pause between delayMin and delayMax for EVERY send, not
+   one fixed interval repeated identically — a constant gap between every
+   message is a mechanical, easily fingerprinted pattern; real human sending
+   never lands on the same interval twice. */
+function randomDelay(min, max) {
+  return min >= max ? min : Math.round(min + Math.random() * (max - min));
+}
+
 /**
  * The send flow for one mail window — same steps `composeBtnSend` always ran
  * (de-dupe, warn about repeats, size-check attachments, confirm, start a
@@ -1330,7 +1338,8 @@ async function sendFromWindow(prefix, opts) {
     footerImageLink: (($(prefix + 'FooterImgLink') || {}).value || '').trim(),
   };
 
-  const delay = Math.max(0, parseInt(($(prefix + 'DelayMs') || {}).value || '800', 10));
+  const delayMin = Math.max(0, parseInt(($(prefix + 'DelayMinMs') || {}).value || '600', 10));
+  const delayMax = Math.max(delayMin, parseInt(($(prefix + 'DelayMaxMs') || {}).value || '1800', 10));
   const total = list.length;
   let sent = 0, failed = 0;
 
@@ -1403,7 +1412,7 @@ async function sendFromWindow(prefix, opts) {
        window. */
     acctSession.progress = { done: i + 1, total };
     renderAccountList();
-    if (delay && i < total - 1) await new Promise(s => setTimeout(s, delay));
+    if (delayMax && i < total - 1) await new Promise(s => setTimeout(s, randomDelay(delayMin, delayMax)));
   }
 
   if (campaignId) {
@@ -2056,7 +2065,8 @@ if ($('fuBtnStop')) $('fuBtnStop').onclick = function () {
 async function runSendLoop(opts) {
   const p = opts.prefix;
   const msg = $(p + 'Msg');
-  const delay = Math.max(0, parseInt(($(p + 'DelayMs') || {}).value || '800', 10));
+  const delayMin = Math.max(0, parseInt(($(p + 'DelayMinMs') || {}).value || '600', 10));
+  const delayMax = Math.max(delayMin, parseInt(($(p + 'DelayMaxMs') || {}).value || '1800', 10));
   const total = opts.people.length;
   let sent = 0, failed = 0, skipped = 0;
 
@@ -2140,7 +2150,7 @@ async function runSendLoop(opts) {
     acctSession.progress = { done: i + 1, total };
     renderAccountList();
 
-    if (delay && i < total - 1) await new Promise(function (r) { setTimeout(r, delay); });
+    if (delayMax && i < total - 1) await new Promise(function (r) { setTimeout(r, randomDelay(delayMin, delayMax)); });
   }
 
   acctSession.sending = false;

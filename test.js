@@ -1019,6 +1019,22 @@ async function csvMappingTests() {
     // Regression guard: an earlier looser design could have this collide with "Company" -> field.
     assert.strictEqual(guess(['Company Email'])[0], 'email');
   });
+
+  group('frontend — randomDelay() picks a fresh value per call, never a fixed interval');
+  await test('stays within [min, max] across many draws', () => {
+    for (let i = 0; i < 200; i++) {
+      const v = dom.window.randomDelay(600, 1800);
+      assert.ok(v >= 600 && v <= 1800, 'out of range: ' + v);
+    }
+  });
+  await test('does not return the same value every time (a real range, not a disguised constant)', () => {
+    const draws = new Set();
+    for (let i = 0; i < 30; i++) draws.add(dom.window.randomDelay(600, 1800));
+    assert.ok(draws.size > 1, 'every draw was identical — this is not actually randomising');
+  });
+  await test('min === max returns that exact value, not a crash or a wrong-direction range', () => {
+    assert.strictEqual(dom.window.randomDelay(800, 800), 800);
+  });
 }
 
 /* ================= frontend: every $() id must resolve ================= */
