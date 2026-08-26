@@ -19,5 +19,6 @@ module.exports = logger.wrap('log', auth.require(async function handler(req, res
     await store.clear();
     return send(res, 200, { ok: true, available: true, driver: store.driver(), rows: [] });
   }
-  send(res, 200, { ok: true, available: true, driver: store.driver(), rows: await store.list(2000) });
+  const owner = (req.query || {}).owner || '';
+  send(res, 200, { ok: true, available: true, driver: store.driver(), rows: await store.list(2000, { owner }) });
 }));

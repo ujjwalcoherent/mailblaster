@@ -149,7 +149,15 @@
       </details>
     </div>
 
-    <div class="mailfoot" data-substep="send">
+    <!-- Deliberately NOT tagged with data-substep: Send/Preview/Stop/Delay
+         and the status message are relevant on every one of the three
+         screens (Compose, Review, Send all need "can I act on this right
+         now"), so this bar stays visible throughout rather than being
+         tucked away behind whichever one substep it was first assigned to
+         — an earlier version tagged it "send"-only, which hid Preview
+         entirely while composing and hid the Send button itself while
+         reviewing. -->
+    <div class="mailfoot">
       <button data-id="BtnSend" class="primary big">Send</button>
       <button data-id="BtnStop" class="danger hidden">Stop</button>
       <button data-id="BtnPreview">Preview</button>
@@ -344,7 +352,7 @@ info@somecompany.com"></textarea>
 
 <!-- ============ SECTION 4 : COMPOSE ============ -->
 <section id="s4" class="panel">
-  <h2>Section 4 — Compose</h2>
+  <h2 id="s4heading">Step 2 — Compose</h2>
 
   <!-- Checking a second (or third...) saved account here mounts a full extra
        mail window for it below, each with its own recipient list, subject
@@ -368,8 +376,11 @@ info@somecompany.com"></textarea>
 
   <!-- Only shown once 2+ accounts are checked above: one combined recipient
        table across every checked window, and the one confirm that starts
-       every one of their send loops. -->
-  <div id="composeMultiBox" class="hidden" data-substep="review">
+       every one of their send loops. Visible on BOTH Review and Send — this
+       box IS both the combined review and the multi-account send action, so
+       tagging it review-only hid the one button that actually starts a
+       multi-account send the moment you moved to the Send step. -->
+  <div id="composeMultiBox" class="hidden">
     <h3>Send to several accounts at once</h3>
     <p class="hint">Every recipient across every checked account below, so one review covers all of them
        before anything sends.</p>
@@ -404,18 +415,16 @@ info@somecompany.com"></textarea>
   </div>
   <div id="dueList"></div>
 
+  <!-- Real tabs, not a <select> — clicking one filters EVERYTHING below
+       (due-list, campaign table, sent log, stats, chart) to that account,
+       or back to every account combined on "All." Rebuilt whenever the
+       saved-account list changes (refreshCampaignAccountFilter()), so it
+       works identically with one saved account (just "All", nothing else
+       to click) or several. -->
+  <div class="row" id="campAccountTabs"></div>
   <h3>Campaign runs</h3>
-  <p class="hint">Every run of a campaign, newest first. With several accounts saved in Section 1,
-     this shows all of them together so nothing needs re-checking one at a time — filter to one
-     account, or leave it on "All accounts" for the combined view. Follow-up sends a threaded
-     reply to people who never responded.</p>
-  <div class="row">
-    <label class="inline">Account
-      <select id="campAccountFilter" style="width:auto;margin-top:0">
-        <option value="">All accounts</option>
-      </select>
-    </label>
-  </div>
+  <p class="hint">Every run of a campaign, newest first. Follow-up sends a threaded reply to people
+     who never responded.</p>
   <div class="tablewrap">
     <table id="campTable">
       <thead><tr>

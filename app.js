@@ -276,6 +276,12 @@ function refreshWizardSteps() {
     composePanel.classList.remove('substep-compose', 'substep-review', 'substep-send');
     composePanel.classList.add('substep-' + composeSubstep);
   }
+  // The heading said "Compose" even while showing Review or Send — same
+  // panel, so the text has to be kept in sync with composeSubstep by hand.
+  if ($('s4heading')) {
+    const heading = { compose: 'Step 2 — Compose', review: 'Step 3 — Review', send: 'Step 4 — Send' };
+    $('s4heading').textContent = heading[composeSubstep] || heading.compose;
+  }
 }
 refreshWizardSteps();
 
@@ -1707,26 +1713,41 @@ refreshComposeSummaries('compose');
 /* Load the real campaign history for whichever Gmail account is in Section 1.
    Scoped by address so two people sharing a browser do not see each other's
    runs; the App Password is never sent anywhere for this. */
-/* Keep the account filter dropdown in sync with whatever is saved in
-   Section 1, so a newly added account shows up as a filter option without a
-   page reload. Defaults to "All accounts" (empty owner -> api/campaigns.js
-   returns every account's history) rather than silently narrowing to
-   whichever one happens to be active in Section 1 \u2014 the whole point of the
+/* Which account Activity is currently filtered to \u2014 '' means every saved
+   account combined. Shared by the campaign table, the sent log/stats/chart,
+   and the due-list, so picking a tab genuinely filters everything on the
+   page, not just the campaign table (a real gap: the sent log/stats/chart
+   used to always show every account's data regardless of this filter). */
+let campAccountTab = '';
+
+/* Real tabs, not a <select> \u2014 rebuilt whenever the saved-account list
+   changes, so a newly added account shows up without a page reload. Works
+   identically with one saved account (just "All", nothing else to click)
+   or several. Defaults to "All" (empty owner -> every endpoint's own
+   combined-view behavior) rather than silently narrowing to whichever
+   account happens to be active in Section 1 \u2014 the whole point of the
    combined view is not having to switch accounts just to see everything. */
 function refreshCampaignAccountFilter() {
-  const sel = $('campAccountFilter');
-  if (!sel) return;
-  const current = sel.value;
+  const host = $('campAccountTabs');
+  if (!host) return;
   const accounts = savedAccountList();
-  sel.innerHTML = '<option value="">All accounts</option>'
-    + accounts.map(a => '<option value="' + esc(a) + '">' + esc(a) + '</option>').join('');
-  if (accounts.includes(current)) sel.value = current;
+  if (!accounts.includes(campAccountTab)) campAccountTab = '';
+  host.innerHTML = ['', ...accounts].map(a => {
+    const label = a || 'All accounts';
+    return '<button class="tab campaccttab' + (a === campAccountTab ? ' active' : '') + '" data-owner="' + esc(a) + '">' + esc(label) + '</button>';
+  }).join('');
+  host.querySelectorAll('.campaccttab').forEach(b => b.onclick = () => {
+    campAccountTab = b.dataset.owner;
+    host.querySelectorAll('.campaccttab').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    loadCampaigns();
+    loadAnalytics();
+  });
 }
-if ($('campAccountFilter')) $('campAccountFilter').addEventListener('change', loadCampaigns);
 
 async function loadCampaigns() {
   refreshCampaignAccountFilter();
-  const owner = ($('campAccountFilter') && $('campAccountFilter').value) || '';
+  const owner = campAccountTab || '';
   const tb = document.querySelector('#campTable tbody');
   if (tb && !campaignCache.length) {
     tb.innerHTML = '<tr><td colspan="10" class="hint">Loading\u2026</td></tr>';
@@ -2651,7 +2672,8 @@ async function loadAnalytics() {
   let source = '<b>This browser only</b> — history is kept in localStorage, so other devices '
     + 'and other people see nothing. Connect a Postgres database to share it.';
   try {
-    const r = await fetch('/api/log').then(x => x.json());
+    const owner = campAccountTab || '';
+    const r = await fetch('/api/log' + (owner ? '?owner=' + encodeURIComponent(owner) : '')).then(x => x.json());
     if (r && r.ok && r.available) {
       rows = r.rows;
       source = r.driver === 'postgres'
@@ -2661,7 +2683,10 @@ async function loadAnalytics() {
       source += '<br/><span class="mono">' + esc(r.reason) + '</span>';
     }
   } catch (e) {}
-  if (!rows) rows = localLogAll().slice().reverse();
+  if (!rows) {
+    rows = localLogAll().slice().reverse();
+    if (campAccountTab) rows = rows.filter(e => String(e.from || '').toLowerCase() === campAccountTab);
+  }
 
   logCache = rows;
   $('logSource').innerHTML = source;
