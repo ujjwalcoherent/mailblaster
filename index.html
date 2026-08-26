@@ -241,34 +241,36 @@
 <!-- ============ SECTION 2 : RECONSTRUCT A PAST CAMPAIGN ============ -->
 <section id="s2" class="panel">
   <h2>Section 2 — Reconstruct a past campaign</h2>
-  <p class="hint">Find a campaign you already sent — before this tool, in another tool, or one that
-     didn't get logged here — directly from a saved account's Sent folder, so a follow-up can thread
-     onto the real conversation instead of arriving as a new, unrelated email. Search by subject text,
-     the recipient's email, a date range, or any combination; leave everything blank to just browse by
-     date. Do this <b>before</b> Section 3 (Recipients) if the people you're about to email are the
-     same ones from a campaign you want to pick up from.</p>
+  <p class="hint">Find a campaign you already sent, from the account's own Sent folder, so a follow-up
+     threads onto the real conversation instead of arriving as something new. Fill in anything you know
+     — leave the rest blank.</p>
 
-  <div class="grid2">
-    <label>Search this account
+  <div class="reconform">
+    <label class="rf-account">Search this account
       <select id="impUser"><option value="">— choose a saved account —</option></select>
     </label>
-    <label>Subject or body text <small>leave blank to search by recipient/date only</small>
+
+    <label class="rf-query">Subject or body contains <small>the main way to search — e.g. a phrase from the email</small>
       <input id="impQuery" type="text" placeholder="great meeting at the event"/>
     </label>
-    <label>Recipient's email <small>find every campaign ever sent to this person</small>
+
+    <label class="rf-to">Sent to <small>find every campaign ever sent to one person</small>
       <input id="impTo" type="email" placeholder="person@company.com"/>
     </label>
-    <label>From date
-      <input id="impSince" type="date"/>
-    </label>
-    <label>To date <small>defaults to today</small>
-      <input id="impUntil" type="date"/>
-    </label>
+
+    <div class="rf-dates">
+      <span class="rf-dates-label">Date range <small>optional — narrows a broad search</small></span>
+      <div class="rf-dates-row">
+        <input id="impSince" type="date" aria-label="From date"/>
+        <span class="rf-dates-sep">to</span>
+        <input id="impUntil" type="date" aria-label="To date, defaults to today"/>
+      </div>
+    </div>
   </div>
   <p class="hint" id="impToCaveat"></p>
 
   <details class="msection" id="impPasteBox">
-    <summary>Paste one of the emails instead <small>uses its subject/Message-Id to seed the search</small></summary>
+    <summary>Have one of the emails on hand instead? <small>paste it to seed the search from its subject or Message-Id</small></summary>
     <div class="msectionbody">
       <textarea id="impPasted" rows="6" placeholder="Paste the full email (headers and all, if you have them) or just its subject line"></textarea>
     </div>

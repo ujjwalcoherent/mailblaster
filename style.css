@@ -35,6 +35,22 @@ textarea{resize:vertical}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}
 @media(max-width:720px){.grid2{grid-template-columns:1fr}}
 
+/* Section 2's search form: an asymmetric grid, not an even 2x2 — the
+   subject/body query is the main way most people will actually search, so
+   it gets the widest cell and its own row; account picker and "sent to"
+   share a row as secondary fields; the date range renders as one paired
+   control (two inputs with "to" between them) instead of two independent
+   full-width date pickers that read as unrelated fields. */
+.reconform{display:grid;grid-template-columns:1fr 1fr;gap:4px 18px}
+.reconform .rf-query{grid-column:1 / -1}
+.reconform .rf-dates{grid-column:1 / -1}
+@media(max-width:720px){.reconform{grid-template-columns:1fr}}
+.rf-dates-label{display:block;font-weight:600;font-size:12.5px;color:var(--muted);margin-bottom:5px}
+.rf-dates-label small{font-weight:400}
+.rf-dates-row{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.rf-dates-row input{width:auto;flex:1;margin-top:0}
+.rf-dates-sep{color:var(--muted);font-size:12.5px;flex:none}
+
 .row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:14px 0}
 button{background:#fff;border:1px solid var(--line);padding:8px 14px;border-radius:8px;cursor:pointer;
   font:inherit;font-weight:600;color:var(--ink)}
