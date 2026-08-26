@@ -62,6 +62,14 @@ main{max-width:1040px;margin:0 auto;padding:22px}
   box-shadow:0 1px 3px rgba(20,30,60,.05)}
 .panel.active{display:block}
 h2{margin:0 0 6px;font-size:19px}
+/* A real, visible entry point into a related screen, not one word buried
+   inside a paragraph of prose — reported directly as missed entirely.
+   Title/intro on the left, the action button on the right, so it reads as
+   "here's this panel, and here's the other thing you'd want from here." */
+.sectionhead{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:4px}
+.sectionhead h2, .sectionhead .hint{margin-bottom:4px}
+button.gotoreplies{flex:none;background:#fff2e0;border-color:#f5d9ad;color:#8a5a00;font-weight:700;white-space:nowrap}
+button.gotoreplies:hover{background:#ffe8c7}
 h3{margin:22px 0 8px;font-size:14px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)}
 h3 small{text-transform:none;letter-spacing:0;font-weight:400}
 .hint{color:var(--muted);margin:0 0 16px}
