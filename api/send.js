@@ -79,6 +79,7 @@ module.exports = log.wrap('send', auth.require(async function handler(req, res) 
     name: r.first || fallback,
     fullName: r.full || '',
     confidence: r.confidence || null,
+    fields: r.fields || null,
     subject,
     // only real attachments — the inline footer image isn't one
     attachments: (b.attachments || []).map(a => a.filename),

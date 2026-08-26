@@ -89,6 +89,15 @@ ALTER TABLE recipients ADD COLUMN IF NOT EXISTS followup_count INT NOT NULL DEFA
 ALTER TABLE recipients ADD COLUMN IF NOT EXISTS last_followup_at TIMESTAMPTZ;
 ALTER TABLE recipients ADD COLUMN IF NOT EXISTS contact_count  INT NOT NULL DEFAULT 0;
 
+-- Arbitrary extra merge-field data from an imported spreadsheet (e.g. a
+-- "website_name" or "industry" column), stored as one JSON blob rather than
+-- one column per possible field — the whole point of lib/util.js's render()
+-- resolving {{website_name}} generically is that a new merge field is a data
+-- question, not a schema migration. Kept even after the send that used it,
+-- since a follow-up or a later campaign to the same person should not have
+-- to ask for a CSV re-upload to keep personalising.
+ALTER TABLE recipients ADD COLUMN IF NOT EXISTS fields TEXT;
+
 -- A follow-up threads onto the message it chases; storing the parent send lets
 -- the viewer show the original underneath the reply, as Gmail does.
 ALTER TABLE sends      ADD COLUMN IF NOT EXISTS in_reply_to_send BIGINT;

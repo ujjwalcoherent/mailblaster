@@ -230,6 +230,63 @@ async function errorTests() {
   });
 }
 
+/* ================= util — merge-field rendering ================= */
+
+const { render, resolveField, fieldsUsed } = require('./lib/util');
+
+async function utilTests() {
+  group('util — render() resolves ANY recipient field, not a hardcoded list');
+  await test('built-in {{name}} falls back to the greeting fallback when unset', () => {
+    assert.strictEqual(render('Hi {{name}}', {}, 'there'), 'Hi there');
+  });
+  await test('built-in {{name}}/{{first_name}} are the same alias', () => {
+    const r = { first: 'Anita' };
+    assert.strictEqual(render('{{name}} / {{first_name}}', r, 'there'), 'Anita / Anita');
+  });
+  await test('built-in {{full_name}} and {{email}}', () => {
+    const r = { first: 'Anita', full: 'Anita Sharma', email: 'a@x.com' };
+    assert.strictEqual(render('{{full_name}} <{{email}}>', r, 'there'), 'Anita Sharma <a@x.com>');
+  });
+  await test('an arbitrary CSV column resolves with no code change, via r.fields', () => {
+    const r = { first: 'Anita', fields: { website_name: 'Acme Corp', industry: 'Healthcare' } };
+    assert.strictEqual(
+      render('{{name}} works in {{industry}} at {{website_name}}', r, 'there'),
+      'Anita works in Healthcare at Acme Corp'
+    );
+  });
+  await test('an arbitrary top-level key also resolves, not just r.fields', () => {
+    assert.strictEqual(render('{{company}}', { company: 'Acme' }, 'there'), 'Acme');
+  });
+  await test('field keys match regardless of case or underscores', () => {
+    const r = { fields: { Website_Name: 'Acme' } };
+    assert.strictEqual(render('{{website name}}', r, 'there'), 'Acme');
+    assert.strictEqual(render('{{WEBSITENAME}}', r, 'there'), 'Acme');
+  });
+  await test('an unknown/mistyped tag stays visible rather than rendering blank', () => {
+    // A user proofreading a draft needs to SEE {{compnay}} to catch the typo —
+    // silently blanking it is how a mail merge ships "Dear ,".
+    assert.strictEqual(render('Hi {{name}}, re: {{compnay}}', { first: 'Anita' }, 'there'),
+      'Hi Anita, re: {{compnay}}');
+  });
+  await test('a null/undefined field value renders as empty, not "null"', () => {
+    assert.strictEqual(render('{{notes}}', { fields: { notes: null } }, 'there'), '');
+  });
+  await test('resolveField distinguishes "unknown" (null) from "known but empty" ("")', () => {
+    assert.strictEqual(resolveField('doesnotexist', { first: 'A' }, 'x'), null);
+    assert.strictEqual(resolveField('notes', { fields: { notes: '' } }, 'x'), '');
+  });
+  await test('fieldsUsed lists every distinct token once, in first-appearance order', () => {
+    assert.deepStrictEqual(
+      fieldsUsed('Hi {{name}}, {{Website_Name}} and {{email}} again {{name}}'),
+      ['name', 'Website_Name', 'email']
+    );
+  });
+  await test('no template returns the template unchanged rather than throwing', () => {
+    assert.strictEqual(render(null, {}, 'there'), '');
+    assert.strictEqual(render('plain text, no tags', {}, 'there'), 'plain text, no tags');
+  });
+}
+
 /* ================= importer ================= */
 
 const { cluster, parsePasted, rebuildTemplate, linkThreadPositions } = require('./lib/importer');
@@ -966,6 +1023,7 @@ async function frontendTests() {
 (async () => {
   console.log('MailBlaster test suite');
   await classifyTests();
+  await utilTests();
   await errorTests();
   await importerTests();
   await authTests();
