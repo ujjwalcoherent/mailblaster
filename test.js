@@ -979,6 +979,48 @@ async function frontendLoadTests() {
   });
 }
 
+/* ================= frontend: CSV column-mapping guesses ================= */
+
+async function csvMappingTests() {
+  group('frontend — guessCsvMapping() detects common spreadsheet headers');
+  let JSDOM;
+  try { ({ JSDOM } = require('jsdom')); } catch (e) { console.log('  (skipped — jsdom not installed)'); return; }
+
+  const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+  const appSrc = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+  const dom = new JSDOM(html, { url: 'http://localhost/', runScripts: 'outside-only' });
+  dom.window.fetch = () => Promise.resolve({ json: () => Promise.resolve({ ok: false }) });
+  dom.window.eval(appSrc);
+  const guess = headers => dom.window.guessCsvMapping(headers).map(m => m.role);
+
+  await test('exact "Email"/"First Name"/"Last Name" headers', () => {
+    assert.deepStrictEqual(guess(['First Name', 'Last Name', 'Email']), ['firstName', 'lastName', 'email']);
+  });
+  await test('common real-world variants (underscores, "E-Mail Address", "Given Name")', () => {
+    assert.deepStrictEqual(
+      guess(['given_name', 'family_name', 'e-mail address']),
+      ['firstName', 'lastName', 'email']
+    );
+  });
+  await test('a single combined "Full Name" / "Name" column', () => {
+    assert.strictEqual(guess(['Name'])[0], 'fullName');
+    assert.strictEqual(guess(['Full Name'])[0], 'fullName');
+  });
+  await test('a looser "Work Email" / "Contact E-Mail" still matches via the e-mail substring fallback', () => {
+    assert.deepStrictEqual(guess(['Work Email', 'Contact E-Mail']), ['email', 'email']);
+  });
+  await test('several email-shaped columns (email, email2, alt_email) all become email candidates', () => {
+    assert.deepStrictEqual(guess(['Email', 'Email2', 'Alt Email']), ['email', 'email', 'email']);
+  });
+  await test('an unrecognised header becomes a merge field, never silently dropped', () => {
+    assert.deepStrictEqual(guess(['Website Name', 'Industry']), ['field', 'field']);
+  });
+  await test('"Company Email" does not get outranked by a plain substring match into the wrong role', () => {
+    // Regression guard: an earlier looser design could have this collide with "Company" -> field.
+    assert.strictEqual(guess(['Company Email'])[0], 'email');
+  });
+}
+
 /* ================= frontend: every $() id must resolve ================= */
 
 /**
@@ -1030,6 +1072,7 @@ async function frontendTests() {
   await storeTests();
   await llmTests();
   await frontendLoadTests();
+  await csvMappingTests();
   await frontendTests();
 
   console.log('\n' + '-'.repeat(50));

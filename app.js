@@ -564,6 +564,155 @@ $('btnParse').onclick = () => {
   say($('parseMsg'), parseSummary(recipients, dupes), recipients.length > 0);
 };
 
+/* ---------- CSV/spreadsheet import ----------
+   A pasted list only ever gives an email; a spreadsheet can carry a name AND
+   arbitrary extra columns (industry, website_name, whatever) that become
+   merge fields with no code change, per lib/util.js's resolveField(). The
+   real risk here isn't parsing — Papa.parse does that correctly — it's
+   GUESSING which column is the email/first/last name wrong and silently
+   sending "Hi Acme Corp," to someone. So every guess is shown and editable
+   before anything is imported, never applied blind. */
+
+/* One column can repeat (email, email2, email3, ... — a person with several
+   addresses on one row) or two columns can BOTH be "the name" (first + last
+   in separate columns rather than one). Scored by how closely a header
+   matches a known pattern, not just whether it contains a substring, so
+   "Company Email" doesn't win over an unambiguous "Email" column. */
+const CSV_FIELD_PATTERNS = {
+  email: /^e[-_ ]?mail(?:[-_ ]?(?:address|\d+))?$/i,
+  firstName: /^(?:first[-_ ]?name|given[-_ ]?name|fname)$/i,
+  lastName: /^(?:last[-_ ]?name|surname|family[-_ ]?name|lname)$/i,
+  fullName: /^(?:full[-_ ]?name|name|contact[-_ ]?name)$/i,
+};
+
+function guessCsvMapping(headers) {
+  // role: 'email' | 'firstName' | 'lastName' | 'fullName' | 'ignore' | 'field'
+  const guesses = headers.map(h => {
+    const trimmed = String(h || '').trim();
+    for (const role of ['email', 'firstName', 'lastName', 'fullName']) {
+      if (CSV_FIELD_PATTERNS[role].test(trimmed)) return { header: h, role };
+    }
+    // A bare "e-mail" substring match, looser than the exact patterns above,
+    // catches real-world headers like "Work Email" or "Contact E-Mail"
+    // that a strict pattern would otherwise miss and leave unmapped.
+    if (/e[-_ ]?mail/i.test(trimmed)) return { header: h, role: 'email' };
+    return { header: h, role: 'field' };   // becomes a merge field, not ignored
+  });
+  // Several email-shaped columns (email, email2, alt_email...) are all kept
+  // as 'email' candidates; the mapping UI picks the primary, the rest become
+  // additional-email fields rather than silently dropped.
+  return guesses;
+}
+
+let csvRows = [];       // raw parsed objects, one per spreadsheet row
+let csvHeaders = [];
+let csvMapping = [];    // [{ header, role }] — role is user-editable after the guess
+
+function renderCsvMapping() {
+  const host = $('csvMapping');
+  host.classList.remove('hidden');
+  const roleOptions = ['email', 'firstName', 'lastName', 'fullName', 'field', 'ignore'];
+  const roleLabel = { email: 'Email', firstName: 'First name', lastName: 'Last name',
+    fullName: 'Full name', field: 'Merge field ({{' + '...' + '}})', ignore: 'Ignore this column' };
+  host.innerHTML = '<p class="hint">' + csvRows.length + ' row(s) found. Confirm what each column means:</p>'
+    + '<div class="tablewrap"><table><thead><tr><th>Column</th><th>Use as</th><th>Sample</th></tr></thead><tbody>'
+    + csvMapping.map((m, i) => {
+        const sample = csvRows[0] ? String(csvRows[0][m.header] ?? '') : '';
+        return '<tr><td class="mono" style="font-size:12px">' + esc(m.header) + '</td>'
+          + '<td><select class="csvRoleSelect" data-i="' + i + '">'
+          + roleOptions.map(r => '<option value="' + r + '"' + (r === m.role ? ' selected' : '') + '>' + esc(roleLabel[r]) + '</option>').join('')
+          + '</select></td>'
+          + '<td class="hint" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(sample) + '</td></tr>';
+      }).join('')
+    + '</tbody></table></div>';
+
+  host.querySelectorAll('.csvRoleSelect').forEach(sel => sel.onchange = () => {
+    csvMapping[+sel.dataset.i].role = sel.value;
+  });
+
+  const hasEmail = csvMapping.some(m => m.role === 'email');
+  $('btnCsvImport').classList.toggle('hidden', !hasEmail);
+  if (!hasEmail) say($('csvMsg'), 'No column is mapped to Email — pick one above before importing.', false);
+  else say($('csvMsg'), '', true);
+}
+
+if ($('csvFile')) $('csvFile').onchange = () => {
+  const file = $('csvFile').files[0];
+  if (!file) return;
+  say($('csvMsg'), 'Reading ' + file.name + '…', true);
+  Papa.parse(file, {
+    header: true,
+    skipEmptyLines: true,
+    complete: (results) => {
+      csvHeaders = results.meta.fields || [];
+      csvRows = results.data || [];
+      if (!csvHeaders.length || !csvRows.length) {
+        say($('csvMsg'), 'Could not find any columns or rows — is the first row a header row?', false);
+        $('csvMapping').classList.add('hidden');
+        $('btnCsvImport').classList.add('hidden');
+        return;
+      }
+      csvMapping = guessCsvMapping(csvHeaders);
+      renderCsvMapping();
+    },
+    error: (err) => say($('csvMsg'), 'Could not read that file: ' + err.message, false),
+  });
+};
+
+if ($('btnCsvImport')) $('btnCsvImport').onclick = () => {
+  const emailCols = csvMapping.filter(m => m.role === 'email').map(m => m.header);
+  const firstCol = (csvMapping.find(m => m.role === 'firstName') || {}).header;
+  const lastCol = (csvMapping.find(m => m.role === 'lastName') || {}).header;
+  const fullCol = (csvMapping.find(m => m.role === 'fullName') || {}).header;
+  const fieldCols = csvMapping.filter(m => m.role === 'field').map(m => m.header);
+
+  const seen = new Set();
+  const list = [];
+  let skipped = 0;
+  for (const row of csvRows) {
+    // A row can carry several email columns (email, email2, ...) — each
+    // becomes its own recipient sharing that row's name/fields, since a
+    // person's own second address should still get greeted correctly, not
+    // silently dropped just because it wasn't in the primary column.
+    for (const col of emailCols) {
+      const email = String(row[col] || '').trim().toLowerCase();
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { if (row[col]) skipped++; continue; }
+      if (seen.has(email)) continue;
+      seen.add(email);
+
+      const csvFirst = firstCol ? String(row[firstCol] || '').trim() : '';
+      const csvLast = lastCol ? String(row[lastCol] || '').trim() : '';
+      const csvFull = fullCol ? String(row[fullCol] || '').trim() : '';
+      let parsed;
+      if (csvFirst || csvLast) {
+        parsed = { first: csvFirst, full: [csvFirst, csvLast].filter(Boolean).join(' '), generic: false, confidence: 'high', source: 'csv' };
+      } else if (csvFull) {
+        const parts = csvFull.split(/\s+/);
+        parsed = { first: parts[0] || '', full: csvFull, generic: false, confidence: 'high', source: 'csv' };
+      } else {
+        parsed = parseName(email);   // no name column at all — fall back to guessing from the address
+      }
+
+      const fields = {};
+      for (const col of fieldCols) {
+        const v = row[col];
+        if (v != null && String(v).trim() !== '') fields[col] = v;
+      }
+
+      list.push(Object.assign({ email }, parsed, Object.keys(fields).length ? { fields } : {}));
+    }
+  }
+
+  if (!list.length) return say($('csvMsg'), 'No valid email addresses found in the mapped column(s).', false);
+  recipients = list;
+  renderRecipients();
+  say($('csvMsg'), list.length + ' recipient(s) imported'
+    + (skipped ? ' · ' + skipped + ' row(s) skipped (invalid email)' : '')
+    + (fieldCols.length ? ' · ' + fieldCols.length + ' merge field column(s) carried over' : ''),
+    true);
+  $('csvImportBox').open = false;
+};
+
 function renderRecipients() {
   if (typeof refreshComposeHeader === 'function') setTimeout(refreshComposeHeader, 0);
   const tb = document.querySelector('#recTable tbody');
@@ -573,7 +722,9 @@ function renderRecipients() {
       ? '<span class="badge g">generic inbox</span>'
       : low
         ? '<span class="badge w" title="No separator in the address, so this may be a full name run together, initials, or a company. Check it.">check this name</span>'
-        : '<span class="badge p">from email id</span>';
+        : r.source === 'csv'
+          ? '<span class="badge p">from spreadsheet</span>'
+          : '<span class="badge p">from email id</span>';
     return '<tr class="' + (r.generic ? 'generic' : low ? 'lowconf' : '') + '">'
     + '<td>' + (i + 1) + '</td>'
     + '<td>' + esc(r.email) + '</td>'
@@ -936,7 +1087,15 @@ $('btnFallbackFlagged').onclick = () => {
   say($('parseMsg'), flagged.length + ' flagged name(s) now use the fallback greeting.', true);
 };
 
-$('btnSkipSent').onclick = async () => {
+/* No longer a permanent Section 3 button: skipping already-delivered
+   addresses only ever makes sense when RESUMING a paused/stopped campaign,
+   never when starting a fresh one (which has no history to skip against
+   yet), so it doesn't belong as an always-visible action for the common
+   "start new" path. The function stays — resumeCampaign() already does
+   this same filtering server-side via /api/resume, but this client-side
+   version is kept available for wiring into wherever "resume a paused
+   campaign" ends up living in the account-first-then-fork flow. */
+async function skipAlreadySent() {
   if (!recipients.length) return say($('parseMsg'), 'Parse the list first.', false);
   const done = await sentAddresses();
   const before = recipients.length;
@@ -948,7 +1107,7 @@ $('btnSkipSent').onclick = async () => {
       ? 'Removed ' + removed + ' address(es) already delivered · ' + recipients.length + ' left to send'
       : 'None of these have been delivered yet — nothing removed.',
     true);
-};
+}
 
 /**
  * The send flow for one mail window — same steps `composeBtnSend` always ran

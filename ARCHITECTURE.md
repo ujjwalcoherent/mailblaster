@@ -305,6 +305,42 @@ sight, not a default anyone has to discover they're paying for.
 
 ---
 
+## Importing recipients from a spreadsheet
+
+Section 3 (Recipients) has a paste box for a plain list of addresses, and —
+folded under a collapsed "Or import a spreadsheet" — a proper CSV import:
+`Papa.parse(file, {header: true})` (vendored, `vendor/papaparse.min.js`,
+checked via Context7 first for a browser build with no bundler) reads the
+file with its own header row as keys, and `guessCsvMapping()` scores each
+header against known patterns for email/first name/last name/full name.
+
+The guess is never applied blind. Every column, guessed role included, is
+shown in an editable table before anything imports — a wrong guess here
+means a wrong greeting sent to everyone in the file, so the cost of a
+silent mistake is much higher than the cost of one extra click to confirm
+it. A header that doesn't match anything becomes a merge field automatically
+rather than being dropped or ignored: `render()`'s generic field resolution
+(`lib/util.js`) means a column named `website_name` just works as
+`{{website_name}}` in the message, so nothing about a new spreadsheet
+column ever needs a code change on either side. Several email-shaped
+columns on one row (`email`, `email2`, `alt_email`) are each imported as
+their own recipient sharing that row's name and fields, rather than only
+the first one winning — a person's second address should still get
+greeted correctly.
+
+This is deliberately more cautious than at least one mature reference
+point checked for this: github.com/arafat-web/Bulk-Email-Sender's importer
+matches a small fixed set of exact header names (`email_address` /
+`email`, `given_name` / `first_name`, ...) with no confirmation step and no
+extensibility — an unrecognised column, or an email column with a
+different name, is silently skipped. Read its actual controller/importer
+code (not just its README) specifically to check this before building an
+interactive mapping step here, since it would have been faster to skip the
+confirmation UI and just guess — the mature reference's own failure mode
+is the reason not to.
+
+---
+
 ## Importing campaigns sent before this tool
 
 This search and import flow is Section 2 — its own screen, positioned
