@@ -71,6 +71,7 @@ async function post(req, res) {
       const campaignId = await store.startCampaign({
         name: b.name || b.subject || 'Campaign', subject: b.subject || null,
         from: b.from, total: Number(b.total) || 0,
+        groupKey: b.groupKey || null,
       });
       log.info('campaign_started', { campaignId, from: b.from, total: b.total });
       return send(res, 200, { ok: true, campaignId });

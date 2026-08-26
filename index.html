@@ -316,13 +316,38 @@ info@somecompany.com"></textarea>
 <!-- ============ SECTION 4 : COMPOSE ============ -->
 <section id="s4" class="panel">
   <h2>Section 4 — Compose</h2>
-  <!-- The mail window is cloned in here from #mailWindowTpl with the prefix
-       "compose", producing ids like composeSubject, composeEditor, composeFiles. -->
+
+  <!-- Checking a second (or third...) saved account here mounts a full extra
+       mail window for it below, each with its own recipient list, subject
+       and body — see mountMultiAccountWindow() in app.js. Only the
+       default/first saved account is checked to start with, so a single
+       saved account behaves exactly as before this existed: zero extra
+       clicks. -->
+  <div id="composeAccountPicker" class="composeaccounts"></div>
+
+  <!-- The default mail window, always present, cloned from #mailWindowTpl
+       with the prefix "compose" — ids like composeSubject, composeEditor,
+       composeFiles. This is the one account-agnostic window that has always
+       been here; extra windows for other checked accounts mount into
+       #composeExtraWindows below. -->
   <div class="mailmount" data-prefix="compose" data-mode="campaign"></div>
+  <div id="composeExtraWindows"></div>
 
   <p class="hint warn">&#9888; Sending runs in this tab. Keep it open until the campaign finishes &mdash;
      reloading or closing the page stops it partway.</p>
   <div id="preview" class="preview hidden"></div>
+
+  <!-- Only shown once 2+ accounts are checked above: one combined recipient
+       table across every checked window, and the one confirm that starts
+       every one of their send loops. -->
+  <div id="composeMultiBox" class="hidden">
+    <h3>Send to several accounts at once</h3>
+    <p class="hint">Every recipient across every checked account below, so one review covers all of them
+       before anything sends.</p>
+    <div id="composeMultiPreview" class="tablewrap"></div>
+    <button id="composeMultiBtnSend" class="primary big">Review &amp; send all checked accounts</button>
+    <span id="composeMultiMsg" class="msg" role="status" aria-live="polite"></span>
+  </div>
 </section>
 
 <!-- ============ SECTION 5 : ANALYTICS ============ -->

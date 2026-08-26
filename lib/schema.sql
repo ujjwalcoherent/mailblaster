@@ -76,6 +76,13 @@ ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS total_count   INT NOT NULL DEFAUL
 ALTER TABLE campaigns  ADD COLUMN IF NOT EXISTS parent_id     BIGINT;
 ALTER TABLE campaigns  ADD COLUMN IF NOT EXISTS followup_round INT NOT NULL DEFAULT 0;
 
+-- A shared key across several campaigns started together by one "send to
+-- every checked account" action, so Section 5 can show them as one logical
+-- run even though each account gets its own campaign row (sends are scoped
+-- by account, not shareable across rows). NULL for every campaign started
+-- the old way — a single-account send has nothing to group with.
+ALTER TABLE campaigns  ADD COLUMN IF NOT EXISTS group_key     TEXT;
+
 -- Per-person counters, so nobody is chased forever: the composer can cap
 -- follow-ups and show "3rd contact" next to a name.
 ALTER TABLE recipients ADD COLUMN IF NOT EXISTS followup_count INT NOT NULL DEFAULT 0;
@@ -123,3 +130,4 @@ CREATE INDEX IF NOT EXISTS idx_campaigns_owner   ON campaigns(from_email, starte
 CREATE INDEX IF NOT EXISTS idx_sends_sender_time ON sends(sender, time DESC);
 CREATE INDEX IF NOT EXISTS idx_campaigns_parent   ON campaigns(parent_id) WHERE parent_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_recip_followups    ON recipients(followup_count);
+CREATE INDEX IF NOT EXISTS idx_campaigns_group_key ON campaigns(group_key) WHERE group_key IS NOT NULL;

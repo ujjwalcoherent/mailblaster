@@ -70,8 +70,9 @@ td{padding:7px 11px;border-bottom:1px solid #f0f2f8;vertical-align:middle}
 td input{margin:0;padding:5px 8px}
 tr.generic td{background:#fffbe9}
 .trailrow:hover td{background:#f8f9fd}
-.trailexpand td{background:#fbfcfe;padding:14px 16px}
-.trailexpand .preview{margin-top:0}
+.trailexpand td, .multiprevexpand td{background:#fbfcfe;padding:14px 16px}
+.trailexpand .preview, .multiprevexpand .preview{margin-top:0}
+.multiprevrow:hover td{background:#f8f9fd}
 .badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px}
 .badge.sent{background:#e3f6ec;color:var(--ok)}
 .badge.failed{background:#fdeaea;color:var(--bad)}
@@ -183,6 +184,13 @@ label.chk small.hint { display: block; margin-top: 1px; }
   border: 1px solid #dfe3ee; border-radius: 10px; background: #fff;
   box-shadow: 0 1px 3px rgba(20,25,40,.06); overflow: hidden; max-width: 900px;
 }
+/* Section 4's "send to several accounts" checklist and the extra windows it
+   mounts — spaced apart so each extra .mailwindow reads as its own thing,
+   not a continuation of the default one above it. */
+.composeaccounts { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin-bottom: 10px; }
+#composeExtraWindows .mailwindow { margin-top: 18px; }
+#composeMultiBox { margin-top: 18px; }
+#composeMultiPreview table { width: 100%; }
 
 /* --- header: From / To / Subject, like a mail client --- */
 .mailhead { border-bottom: 1px solid #eceff6; }

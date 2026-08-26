@@ -149,6 +149,45 @@ accounts are sending concurrently, so each account card shows its own
 scoped by sender and time — no new table, no new tracking, just a query
 Google's own limit made worth surfacing before it's hit rather than after.
 
+### Composing to several accounts at once is several mail windows, not one window with a list
+
+Section 4 mounts one `#mailWindowTpl` instance per checked saved account (a
+checklist above the usual compose window, defaulting to just the first saved
+account checked — so with only one account saved, nothing about today's
+workflow changes). Each checked account gets its own full window: its own
+recipient paste box, its own subject/body, its own send/stop. This wasn't
+built as "one compose form that fans out to N accounts" on purpose — the
+existing compose window already has per-field state (footer image, draft
+autosave, toolbar selection) that has to be instance-scoped for this to work
+at all, and once it is, giving each account its own window is less code than
+inventing a second, different way to hold N sets of the same fields.
+
+The one place these windows are NOT independent is the confirm before
+sending: with 2+ windows checked, one combined preview lists every recipient
+across every checked window before any of them sends anything, because the
+first version of this reused the single-window "Send" click reasoning
+per-window and it meant confirming (and being able to have second thoughts
+about) each account's send separately — which defeats the point of checking
+several accounts at once. After that one shared confirm, each window's send
+loop runs exactly as it already did for the single compose window and the
+follow-up window — see the `AccountSession` section above for why that is
+safe to run concurrently: each loop is bound to the session of the account it
+started for, not to whichever account a later iteration finds active.
+
+A shared `group_key` (see `POST /api/campaigns` in API.md) is generated once
+per "send all checked accounts" click and passed to every checked account's
+`start` call, purely so Section 5 can show "these ran together" — it has no
+other effect, and a normal single-account send never sets it.
+
+The combined preview's table shows subject per row by default (skimmable
+across a large recipient count), with a per-row "Preview" that expands to
+the exact same fully-merged rendering (greeting, body, footer) the
+single-window Preview button already produces — reusing that one function
+rather than a second, subject-only render path, so the combined view can
+never show something different from what actually gets sent. Subject alone
+answers "who's getting what" at a glance; the expand answers "what will
+THIS person actually receive," which a subject line alone cannot.
+
 ### "Due for follow-up" is a review-and-confirm list, not a scheduler
 
 Section 5 has a button that checks every finished campaign, across every

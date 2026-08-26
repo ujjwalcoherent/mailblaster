@@ -710,6 +710,22 @@ async function storeTests() {
     assert.strictEqual(q.limit, 2000);
   });
 
+  group('store — groupKey ties several accounts\' campaigns to one "send all checked" action');
+  await test('a campaign started without a groupKey has none', async () => {
+    const camp = await store.startCampaign({ name: 'No group', subject: 'Hi', from: 'nogroup@gmail.com', total: 1 });
+    const c = (await store.campaigns('nogroup@gmail.com'))[0];
+    assert.strictEqual(c.groupKey, null);
+  });
+  await test('a groupKey passed to startCampaign is persisted and comes back on campaigns()', async () => {
+    const key = 'grp-test-123';
+    await store.startCampaign({ name: 'Grouped A', subject: 'Hi', from: 'groupa@gmail.com', total: 1, groupKey: key });
+    await store.startCampaign({ name: 'Grouped B', subject: 'Hi', from: 'groupb@gmail.com', total: 1, groupKey: key });
+    const a = (await store.campaigns('groupa@gmail.com'))[0];
+    const b = (await store.campaigns('groupb@gmail.com'))[0];
+    assert.strictEqual(a.groupKey, key);
+    assert.strictEqual(b.groupKey, key);
+  });
+
   group('store — References accumulates the whole ancestor chain (RFC 5322 3.6.4)');
   await test('round 1 follow-up candidate has no prior references, just the original message-id', async () => {
     const camp1 = await store.startCampaign({ name: 'Thread test', subject: 'Hi', from: 'me@gmail.com', total: 1 });

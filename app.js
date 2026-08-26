@@ -20,6 +20,20 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&am
 const ACCOUNTS_KEY = 'mailblaster.accounts';   // ordered list of saved account emails
 const sessions = new Map();                    // email -> AccountSession
 
+/* Declared up here, not where Section 5's campaign-drilldown code actually
+   uses them, because selectAccount() (just below) already writes to
+   campaignCache on page load via restore() -> selectAccount() for ANY
+   returning user with even one saved account. A `let` declared later in the
+   file is real, but unusable until its own line runs (the temporal dead
+   zone) — reading it from a function that CAN be called earlier throws
+   "Cannot access before initialization" the moment that happens, which broke
+   every returning user's first page load the instant selectAccount() started
+   touching this cache. Moving the declaration, not just working around the
+   read, is what actually fixes it — Section 5's code still declares nothing
+   new, it just no longer redeclares what already exists up here. */
+let campaignCache = [];
+let currentCampaign = null;
+
 function newSession(email) {
   return {
     email,
@@ -154,36 +168,41 @@ if ($('apiKeyInput')) {
    Doing it this way rather than copying the block means the two windows
    cannot drift apart: a change to the toolbar or the signature block lands in
    both, and there is exactly one definition to maintain. */
-function mountMailWindows() {
+/* Clone the template into one mount point. Pulled out of mountMailWindows()
+   so a mount added after page load (the multi-account checklist's extra
+   windows in Section 4) can go through the exact same stamping, rather than
+   a second, slightly different copy of this logic. */
+function mountOneMailWindow(mount) {
   const tpl = document.getElementById('mailWindowTpl');
   if (!tpl) return;
+  const prefix = mount.dataset.prefix;
+  const mode = mount.dataset.mode || 'campaign';
+  const node = tpl.content.cloneNode(true);
 
-  document.querySelectorAll('.mailmount').forEach(mount => {
-    const prefix = mount.dataset.prefix;
-    const mode = mount.dataset.mode || 'campaign';
-    const node = tpl.content.cloneNode(true);
-
-    // rows that belong to only one mode (the thread picker, the quoted original)
-    node.querySelectorAll('[data-only]').forEach(el => {
-      if (el.dataset.only !== mode) el.remove();
-    });
-
-    // data-id -> a real, unique id for this instance
-    node.querySelectorAll('[data-id]').forEach(el => {
-      el.id = prefix + el.dataset.id;
-      el.removeAttribute('data-id');
-    });
-    node.querySelectorAll('[data-for]').forEach(el => {
-      el.setAttribute('for', prefix + el.dataset.for);
-      el.removeAttribute('data-for');
-    });
-    // toolbars act on this instance's editor
-    node.querySelectorAll('.toolbar [data-cmd], .toolbar [data-chip]').forEach(b => {
-      b.dataset.target = prefix + 'Editor';
-    });
-
-    mount.appendChild(node);
+  // rows that belong to only one mode (the thread picker, the quoted original)
+  node.querySelectorAll('[data-only]').forEach(el => {
+    if (el.dataset.only !== mode) el.remove();
   });
+
+  // data-id -> a real, unique id for this instance
+  node.querySelectorAll('[data-id]').forEach(el => {
+    el.id = prefix + el.dataset.id;
+    el.removeAttribute('data-id');
+  });
+  node.querySelectorAll('[data-for]').forEach(el => {
+    el.setAttribute('for', prefix + el.dataset.for);
+    el.removeAttribute('data-for');
+  });
+  // toolbars act on this instance's editor
+  node.querySelectorAll('.toolbar [data-cmd], .toolbar [data-chip]').forEach(b => {
+    b.dataset.target = prefix + 'Editor';
+  });
+
+  mount.appendChild(node);
+}
+
+function mountMailWindows() {
+  document.querySelectorAll('.mailmount').forEach(mountOneMailWindow);
 }
 mountMailWindows();
 
@@ -511,27 +530,38 @@ function parseName(email) {
   return { first, full: parts.join(' '), generic: false, confidence };
 }
 
-$('btnParse').onclick = () => {
-  const found = ($('rawEmails').value.match(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/g) || []);
+/* Pulled out of the Section 3 "Parse emails & names" click handler so a
+   per-account compose window (Section 4's multi-account checklist) can reuse
+   the exact same regex + de-duplication + name-parsing logic against its own
+   pasted text, rather than a second copy that could drift from this one. */
+function parseRecipientsFromText(text) {
+  const found = (String(text || '').match(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/g) || []);
   const seen = new Set();
-  recipients = [];
+  const list = [];
   for (const e of found) {
     const email = e.toLowerCase();
     if (seen.has(email)) continue;      // de-duplicate within the pasted list
     seen.add(email);
-    recipients.push(Object.assign({ email }, parseName(email)));
+    list.push(Object.assign({ email }, parseName(email)));
   }
-  renderRecipients();
-  const dupes = found.length - recipients.length;
-  const generic = recipients.filter(x => x.generic).length;
-  const low = recipients.filter(x => !x.generic && x.confidence === 'low').length;
-  say($('parseMsg'),
-    recipients.length + ' unique email(s)'
+  return { list, dupes: found.length - list.length };
+}
+
+function parseSummary(list, dupes) {
+  const generic = list.filter(x => x.generic).length;
+  const low = list.filter(x => !x.generic && x.confidence === 'low').length;
+  return list.length + ' unique email(s)'
     + (dupes ? ' · ' + dupes + ' duplicate(s) removed' : '')
-    + ' · ' + (recipients.length - generic) + ' name(s) parsed'
+    + ' · ' + (list.length - generic) + ' name(s) parsed'
     + (generic ? ' · ' + generic + ' will use the fallback name' : '')
-    + (low ? ' · ⚠ ' + low + ' name(s) need a check before sending' : ''),
-    recipients.length > 0);
+    + (low ? ' · ⚠ ' + low + ' name(s) need a check before sending' : '');
+}
+
+$('btnParse').onclick = () => {
+  const { list, dupes } = parseRecipientsFromText($('rawEmails').value);
+  recipients = list;
+  renderRecipients();
+  say($('parseMsg'), parseSummary(recipients, dupes), recipients.length > 0);
 };
 
 function renderRecipients() {
@@ -567,153 +597,110 @@ function renderRecipients() {
 
 /* ================= SECTION 4 — compose ================= */
 
-/* Footer image, held as base64 so it survives a page reload with the rest of
-   the draft. Declared up here because the draft-restore IIFE below reads it.
-   It is sent to the API as an inline CID attachment, not a data: URI. */
-let footerImage = null;   // { filename, content(base64), mime }
+/* Every piece of state that used to be a single module-level global
+   (footerImage, savedRange, activeEditor, its own recipient list) is now one
+   entry in this map, keyed by the same `prefix` mw() already uses to reach a
+   mail window's ids — the same idiom `sessions` uses for per-account state,
+   just per mail-window-instance instead of per-account. The one always-there
+   entry is 'compose', mounted below exactly like every other prefix; nothing
+   about Section 4's default window is special-cased any more. */
+const composeInstances = new Map();
 
-const editor = $('composeEditor');
+function composeState(prefix) {
+  if (!composeInstances.has(prefix)) {
+    composeInstances.set(prefix, {
+      footerImage: null,      // { filename, content(base64), mime }
+      savedRange: null,
+      activeEditor: null,
+      /* Only ever non-null for an extra per-account window (Section 4's
+         checklist): those parse their own pasted list rather than sharing
+         Section 3's global `recipients`, which stays what the single
+         default window reads so nothing about today's one-account flow
+         changes shape. */
+      ownRecipients: null,
+      /* Also only set for an extra per-account window — the fixed account
+         it sends as, so its Send/Stop never read whichever account happens
+         to be active in Section 1 (unlike the default window, which always
+         has). */
+      ownAccount: null,
+    });
+  }
+  return composeInstances.get(prefix);
+}
 
-/* The rich-text editor is a shared component: Section 4 composes the campaign
-   and Section 6 composes the follow-up, each with its own toolbar. So the
-   saved selection tracks WHICH editor was last focused, and a toolbar button
-   restores into that one — otherwise every button would silently act on the
-   compose editor no matter where the cursor was. */
-let savedRange = null;
-let activeEditor = editor;
+/* The default compose window reads/writes Section 3's shared `recipients`
+   list, same as before this refactor; an extra per-account window (added by
+   the multi-account checklist) keeps its own. One indirection here is what
+   lets every other function below stay written once, in terms of "this
+   instance's recipients," rather than needing an if/else at every call site. */
+function instanceRecipients(prefix) {
+  const st = composeState(prefix);
+  return st.ownRecipients || recipients;
+}
+function setInstanceRecipients(prefix, list) {
+  const st = composeState(prefix);
+  if (st.ownRecipients) st.ownRecipients = list;
+  else recipients = list;
+}
 
 function editors() {
   return Array.from(document.querySelectorAll('.editor[contenteditable="true"]'));
 }
-function saveSel() {
+/* The rich-text editor is a shared component: every mail window has its own
+   toolbar, so the saved selection tracks WHICH editor was last focused per
+   window, and a toolbar button restores into that one — otherwise every
+   button would silently act on whichever window happened to load first. */
+function saveSel(prefix) {
   const s = window.getSelection();
   if (!s.rangeCount) return;
   const host = editors().find(el => el.contains(s.anchorNode));
-  if (host) { activeEditor = host; savedRange = s.getRangeAt(0); }
+  if (!host) return;
+  // Only this editor's own instance state changes — a selection made in one
+  // window's editor must never overwrite another window's saved range.
+  const owner = [...composeInstances.keys()].find(p => host === $(p + 'Editor'));
+  if (owner) { const st = composeState(owner); st.activeEditor = host; st.savedRange = s.getRangeAt(0); }
 }
-function restoreSel(target) {
+function restoreSel(prefix, target) {
+  const st = composeState(prefix);
   /* A toolbar can name its editor with data-target; otherwise use whichever
-     was focused last, falling back to the compose editor. */
+     was focused last in this instance, falling back to this instance's own
+     editor. */
   const want = target ? $(target) : null;
-  if (want && want !== activeEditor) { activeEditor = want; savedRange = null; }
-  if (!savedRange) return activeEditor.focus();
+  if (want && want !== st.activeEditor) { st.activeEditor = want; st.savedRange = null; }
+  if (!st.activeEditor) st.activeEditor = $(prefix + 'Editor');
+  if (!st.savedRange) return st.activeEditor.focus();
   const s = window.getSelection();
   s.removeAllRanges();
-  s.addRange(savedRange);
+  s.addRange(st.savedRange);
 }
-document.addEventListener('mouseup', saveSel);
-document.addEventListener('keyup', saveSel);
+document.addEventListener('mouseup', () => saveSel());
+document.addEventListener('keyup', () => saveSel());
 
-document.querySelectorAll('.toolbar button[data-cmd]').forEach(b => b.onclick = e => {
-  e.preventDefault();
-  restoreSel(b.dataset.target);
-  const cmd = b.dataset.cmd;
-  if (cmd === 'hilite') {
-    if (!document.execCommand('hiliteColor', false, $('composeHlColor').value)) {
-      document.execCommand('backColor', false, $('composeHlColor').value);
-    }
-  } else if (cmd === 'fore') {
-    document.execCommand('foreColor', false, $('composeForeColor').value);
-  } else if (cmd === 'createLink') {
-    const url = prompt('Link URL', 'https://');
-    if (url) document.execCommand('createLink', false, url);
-  } else {
-    document.execCommand(cmd, false, null);
-  }
-  saveSel();
-});
-
-document.querySelectorAll('.toolbar button[data-chip]').forEach(b => b.onclick = e => {
-  e.preventDefault();
-  restoreSel(b.dataset.target);
-  document.execCommand('insertText', false, b.dataset.chip);
-  saveSel();
-});
-
-$('composeBtnHtmlView').onclick = () => {
-  const ta = $('composeHtmlSource');
-  if (ta.classList.contains('hidden')) {
-    ta.value = editor.innerHTML;
-    ta.classList.remove('hidden');
-    editor.classList.add('hidden');
-  } else {
-    editor.innerHTML = ta.value;
-    ta.classList.add('hidden');
-    editor.classList.remove('hidden');
-  }
-};
-
-const bodyHtml = () => $('composeHtmlSource').classList.contains('hidden') ? editor.innerHTML : $('composeHtmlSource').value;
-
-/* draft autosave */
-const DRAFT_KEY = 'mailblaster.draft';
-const DRAFT_FIELDS = ['composeSubject', 'composeGreeting', 'composeClosing', 'composeFooterHtml',
-  'fallbackName', 'composeDelayMs', 'rawEmails',
-  'composeFooterImgW', 'composeFooterImgPos', 'composeFooterImgLink'];
-(function restoreDraft() {
-  try {
-    const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}');
-    DRAFT_FIELDS.forEach(k => { if (d[k] != null) $(k).value = d[k]; });
-    if (d.body) editor.innerHTML = d.body;
-    if (d.footerImage) { footerImage = d.footerImage; renderFooterImg(); }
-  } catch (e) {}
-})();
-function saveDraft() {
-  const d = { body: bodyHtml(), footerImage };
-  DRAFT_FIELDS.forEach(k => d[k] = $(k).value);
-  try {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
-  } catch (e) {
-    // localStorage is ~5 MB; a large signature can overflow it. Keep the text.
-    delete d.footerImage;
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
-  }
+function bodyHtmlOf(prefix) {
+  const src = $(prefix + 'HtmlSource'), ed = $(prefix + 'Editor');
+  return src.classList.contains('hidden') ? ed.innerHTML : src.value;
 }
-/* Bind defensively: one absent element must never throw and leave every
-   handler defined after this point unbound. */
-DRAFT_FIELDS.forEach(k => { const el = $(k); if (el) el.addEventListener('input', saveDraft); });
-if (editor) editor.addEventListener('input', saveDraft);
 
-/* ---- footer image (signature / banner) ---- */
-
-function renderFooterImg() {
-  const el = $('composeFooterImgPrev');
-  if (!footerImage) { el.innerHTML = ''; return; }
-  const w = $('composeFooterImgW').value || 220;
-  el.innerHTML = '<img src="data:' + footerImage.mime + ';base64,' + footerImage.content
+function renderFooterImgOf(prefix) {
+  const st = composeState(prefix);
+  const el = $(prefix + 'FooterImgPrev');
+  if (!el) return;
+  if (!st.footerImage) { el.innerHTML = ''; return; }
+  const w = ($(prefix + 'FooterImgW') || {}).value || 220;
+  el.innerHTML = '<img src="data:' + st.footerImage.mime + ';base64,' + st.footerImage.content
     + '" style="width:' + w + 'px;max-width:100%"/>'
-    + '<div class="lbl">' + esc(footerImage.filename) + ' · '
-    + Math.round(footerImage.content.length * 0.75 / 1024) + ' KB</div>';
+    + '<div class="lbl">' + esc(st.footerImage.filename) + ' · '
+    + Math.round(st.footerImage.content.length * 0.75 / 1024) + ' KB</div>';
 }
 
-$('composeFooterImg').onchange = async () => {
-  const f = $('composeFooterImg').files[0];
-  if (!f) return;
-  if (f.size > 2 * 1024 * 1024 &&
-      !confirm('That image is ' + (f.size / 1048576).toFixed(1) + ' MB. Big signatures slow every send '
-             + 'and can trip spam filters. Use it anyway?')) {
-    $('composeFooterImg').value = '';
-    return;
-  }
-  const b64 = await readFileB64(f);
-  footerImage = { filename: f.name, content: b64.content, mime: f.type || 'image/png' };
-  renderFooterImg();
-  saveDraft();
-};
-
-$('composeBtnClearImg').onclick = () => {
-  footerImage = null;
-  $('composeFooterImg').value = '';
-  renderFooterImg();
-  saveDraft();
-};
-
-$('composeFooterImgW').addEventListener('input', renderFooterImg);
-
-$('composeFiles').onchange = () => {
-  $('composeFileList').innerHTML = Array.from($('composeFiles').files)
-    .map(f => '<span>📎 ' + esc(f.name) + ' · ' + (f.size / 1024).toFixed(0) + ' KB</span>').join('');
-};
+function readFileB64(file) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve({ filename: file.name, content: String(fr.result).split(',')[1] });
+    fr.onerror = reject;
+    fr.readAsDataURL(file);
+  });
+}
 
 function fill(tpl, r) {
   const fb = $('fallbackName').value || 'there';
@@ -725,38 +712,40 @@ function fill(tpl, r) {
     .replace(/\{\{\s*email\s*\}\}/gi, r.email);
 }
 
-$('composeBtnPreview').onclick = () => {
-  if (!recipients.length) return say($('composeMsg'), 'Parse some recipients first (Section 3).', false);
-  const r = recipients[0], p = $('preview');
-  p.classList.remove('hidden');
-  const img = footerImage
-    ? '<img src="data:' + footerImage.mime + ';base64,' + footerImage.content
-      + '" style="display:block;width:' + ($('composeFooterImgW').value || 220) + 'px;max-width:100%;margin:10px 0"/>'
-    : '';
-  const footerBlock = $('composeFooterImgPos').value === 'above'
-    ? img + fill($('composeFooterHtml').value, r)
-    : fill($('composeFooterHtml').value, r) + img;
+/* draft autosave — only ever the default "compose" window's fields, exactly
+   as before: an extra per-account window is throwaway state for one send,
+   not a second draft slot. */
+const DRAFT_KEY = 'mailblaster.draft';
+const DRAFT_FIELDS = ['composeSubject', 'composeGreeting', 'composeClosing', 'composeFooterHtml',
+  'fallbackName', 'composeDelayMs', 'rawEmails',
+  'composeFooterImgW', 'composeFooterImgPos', 'composeFooterImgLink'];
+function restoreDraft() {
+  try {
+    const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}');
+    DRAFT_FIELDS.forEach(k => { if (d[k] != null) $(k).value = d[k]; });
+    const ed = $('composeEditor');
+    if (d.body && ed) ed.innerHTML = d.body;
+    if (d.footerImage) { composeState('compose').footerImage = d.footerImage; renderFooterImgOf('compose'); }
+  } catch (e) {}
+}
+function saveDraft() {
+  const d = { body: bodyHtmlOf('compose'), footerImage: composeState('compose').footerImage };
+  DRAFT_FIELDS.forEach(k => d[k] = $(k).value);
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+  } catch (e) {
+    // localStorage is ~5 MB; a large signature can overflow it. Keep the text.
+    delete d.footerImage;
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+  }
+}
 
-  p.innerHTML =
-    '<div class="to"><b>To:</b> ' + esc(r.email) + ' &nbsp; <b>Subject:</b> ' + esc(fill($('composeSubject').value, r)) + '</div>'
-    + '<p>' + esc(fill($('composeGreeting').value, r)) + '</p>'
-    + fill(bodyHtml(), r)
-    + ($('composeClosing').value ? '<p style="white-space:pre-line">' + esc(fill($('composeClosing').value, r)) + '</p>' : '')
-    + (footerBlock ? '<hr/>' + footerBlock : '');
-};
-
-/* The send loop lives in this tab: closing or reloading mid-campaign kills it.
-   Warn before that happens, and let the user resume by skipping addresses that
-   already went out.
-
-   sending/stopRequested used to be single page-wide flags — meaning Stop on
-   ANY mail window silently killed every other account's in-flight send too,
-   and the compose send loop below used to read/write these same two globals
-   directly. They now live on each account's own session (session(email).
-   sending / .stopRequested), so two accounts sending at once can never step
-   on each other. anySending()/anyStopRequested() below exist only for the
-   handful of places (beforeunload, the legacy top-level compose loop) that
-   still need a page-wide answer. */
+/* sending/stopRequested used to be single page-wide flags — meaning Stop on
+   ANY mail window silently killed every other account's in-flight send too.
+   They now live on each account's own session (session(email).sending /
+   .stopRequested), so two accounts sending at once can never step on each
+   other. anySending()/sendingAccounts() below exist only for the handful of
+   places (beforeunload) that still need a page-wide answer. */
 function anySending() {
   for (const s of sessions.values()) if (s.sending) return true;
   return false;
@@ -784,29 +773,6 @@ function previousSendsFor(emails) {
   return out;
 }
 
-/* Show the exact message a recipient received, merge tags already resolved. */
-function viewSent(i) {
-  const e = logCache[i];
-  if (!e) return;
-  $('modalTitle').textContent = e.subject || '(no subject)';
-  $('modalMeta').innerHTML =
-    '<b>To:</b> ' + esc(e.to) + ' &nbsp;&middot;&nbsp; <b>From:</b> ' + esc(e.from)
-    + ' &nbsp;&middot;&nbsp; ' + new Date(e.time).toLocaleString()
-    + ' &nbsp;&middot;&nbsp; <span class="badge ' + e.status + '">' + e.status + '</span>'
-    + (e.attachments && e.attachments.length
-        ? ' &nbsp;&middot;&nbsp; attached: ' + e.attachments.map(esc).join(', ') : '')
-    + (e.error ? '<br/><span class="msg bad">' + esc(e.error) + '</span>' : '');
-  $('modalBody').innerHTML = e.body
-    ? e.body
-    : '<p class="hint">The body was not recorded for this send &mdash; it predates body logging.</p>';
-  $('modal').classList.remove('hidden');
-}
-
-function closeModal() { $('modal').classList.add('hidden'); $('modalBox').classList.remove('wide'); }
-$('modalClose').onclick = closeModal;
-$('modal').onclick = e => { if (e.target.id === 'modal') closeModal(); };
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
-
 /* Every address that has ever been delivered, from whichever log is live. */
 async function sentAddresses() {
   const out = new Set();
@@ -821,13 +787,144 @@ async function sentAddresses() {
   return out;
 }
 
-$('composeBtnStop').onclick = () => {
-  /* Only the account whose form is showing right now is stopped — Stop must
-     never reach across and kill a different account's in-flight loop. */
-  const s = activeAccount();
-  if (s) s.stopRequested = true;
-  say($('composeMsg'), 'Stopping after the current email…', false);
-};
+/**
+ * Bind every control inside one mail-window instance (toolbar, HTML-source
+ * toggle, footer image, attachments, preview, send/stop) to that instance's
+ * own state via `prefix`. Called once for the default "compose" window and
+ * once per checked account in the multi-account checklist — same wiring
+ * either way, so the two cannot drift apart the way two hand-written copies
+ * would.
+ */
+function mountCompose(prefix) {
+  const st = composeState(prefix);
+
+  const root = $(prefix + 'Editor') ? $(prefix + 'Editor').closest('.mailwindow') : null;
+  if (!root) return;
+
+  root.querySelectorAll('.toolbar button[data-cmd]').forEach(b => b.onclick = e => {
+    e.preventDefault();
+    restoreSel(prefix, b.dataset.target);
+    const cmd = b.dataset.cmd;
+    if (cmd === 'hilite') {
+      const hl = $(prefix + 'HlColor');
+      if (!document.execCommand('hiliteColor', false, hl.value)) {
+        document.execCommand('backColor', false, hl.value);
+      }
+    } else if (cmd === 'fore') {
+      document.execCommand('foreColor', false, $(prefix + 'ForeColor').value);
+    } else if (cmd === 'createLink') {
+      const url = prompt('Link URL', 'https://');
+      if (url) document.execCommand('createLink', false, url);
+    } else {
+      document.execCommand(cmd, false, null);
+    }
+    saveSel();
+  });
+
+  root.querySelectorAll('.toolbar button[data-chip]').forEach(b => b.onclick = e => {
+    e.preventDefault();
+    restoreSel(prefix, b.dataset.target);
+    document.execCommand('insertText', false, b.dataset.chip);
+    saveSel();
+  });
+
+  if ($(prefix + 'BtnHtmlView')) $(prefix + 'BtnHtmlView').onclick = () => {
+    const ta = $(prefix + 'HtmlSource'), ed = $(prefix + 'Editor');
+    if (ta.classList.contains('hidden')) {
+      ta.value = ed.innerHTML;
+      ta.classList.remove('hidden');
+      ed.classList.add('hidden');
+    } else {
+      ed.innerHTML = ta.value;
+      ta.classList.add('hidden');
+      ed.classList.remove('hidden');
+    }
+  };
+
+  if (prefix === 'compose') {
+    // Only the default window's fields are persisted — see the comment above saveDraft().
+    restoreDraft();
+    DRAFT_FIELDS.forEach(k => { const el = $(k); if (el) el.addEventListener('input', saveDraft); });
+    if ($('composeEditor')) $('composeEditor').addEventListener('input', saveDraft);
+  }
+
+  if ($(prefix + 'FooterImg')) $(prefix + 'FooterImg').onchange = async () => {
+    const f = $(prefix + 'FooterImg').files[0];
+    if (!f) return;
+    if (f.size > 2 * 1024 * 1024 &&
+        !confirm('That image is ' + (f.size / 1048576).toFixed(1) + ' MB. Big signatures slow every send '
+               + 'and can trip spam filters. Use it anyway?')) {
+      $(prefix + 'FooterImg').value = '';
+      return;
+    }
+    const b64 = await readFileB64(f);
+    st.footerImage = { filename: f.name, content: b64.content, mime: f.type || 'image/png' };
+    renderFooterImgOf(prefix);
+    if (prefix === 'compose') saveDraft();
+    if (typeof refreshComposeSummaries === 'function') refreshComposeSummaries(prefix);
+  };
+
+  if ($(prefix + 'BtnClearImg')) $(prefix + 'BtnClearImg').onclick = () => {
+    st.footerImage = null;
+    $(prefix + 'FooterImg').value = '';
+    renderFooterImgOf(prefix);
+    if (prefix === 'compose') saveDraft();
+    if (typeof refreshComposeSummaries === 'function') refreshComposeSummaries(prefix);
+  };
+
+  if ($(prefix + 'FooterImgW')) $(prefix + 'FooterImgW').addEventListener('input', () => renderFooterImgOf(prefix));
+
+  if ($(prefix + 'Files')) $(prefix + 'Files').onchange = () => {
+    $(prefix + 'FileList').innerHTML = Array.from($(prefix + 'Files').files)
+      .map(f => '<span>📎 ' + esc(f.name) + ' · ' + (f.size / 1024).toFixed(0) + ' KB</span>').join('');
+    if (typeof refreshComposeSummaries === 'function') refreshComposeSummaries(prefix);
+  };
+
+  if ($(prefix + 'BtnPreview')) $(prefix + 'BtnPreview').onclick = () => {
+    const list = instanceRecipients(prefix);
+    const msgEl = $(prefix + 'Msg');
+    if (!list.length) return say(msgEl, 'Parse some recipients first.', false);
+    renderSinglePreview(prefix, list[0], $('preview'));
+  };
+
+  if ($(prefix + 'BtnStop')) $(prefix + 'BtnStop').onclick = () => {
+    /* Only the account whose credentials this window is currently showing is
+       stopped — Stop must never reach across and kill a different account's
+       in-flight loop. The default window still reads the active account
+       (creds()); an extra per-account window carries its own fixed account. */
+    const email = st.ownAccount || (creds().gUser);
+    const s = session(email);
+    if (s) s.stopRequested = true;
+    say($(prefix + 'Msg'), 'Stopping after the current email…', false);
+  };
+
+  if ($(prefix + 'BtnSend')) $(prefix + 'BtnSend').onclick = () => sendFromWindow(prefix);
+}
+
+/* Render one recipient's merged subject/body/footer into a target element —
+   the exact rendering `composeBtnPreview` always did, pulled out so the
+   combined multi-account preview (Section 4's checklist) can loop it across
+   every checked window rather than reimplementing template merge logic. */
+function renderSinglePreview(prefix, r, target) {
+  const st = composeState(prefix);
+  target.classList.remove('hidden');
+  const imgW = ($(prefix + 'FooterImgW') || {}).value || 220;
+  const img = st.footerImage
+    ? '<img src="data:' + st.footerImage.mime + ';base64,' + st.footerImage.content
+      + '" style="display:block;width:' + imgW + 'px;max-width:100%;margin:10px 0"/>'
+    : '';
+  const footerHtmlVal = ($(prefix + 'FooterHtml') || {}).value || '';
+  const footerBlock = (($(prefix + 'FooterImgPos') || {}).value === 'above')
+    ? img + fill(footerHtmlVal, r)
+    : fill(footerHtmlVal, r) + img;
+
+  target.innerHTML =
+    '<div class="to"><b>To:</b> ' + esc(r.email) + ' &nbsp; <b>Subject:</b> ' + esc(fill(($(prefix + 'Subject') || {}).value || '', r)) + '</div>'
+    + '<p>' + esc(fill(($(prefix + 'Greeting') || {}).value || '', r)) + '</p>'
+    + fill(bodyHtmlOf(prefix), r)
+    + ((($(prefix + 'Closing') || {}).value) ? '<p style="white-space:pre-line">' + esc(fill($(prefix + 'Closing').value, r)) + '</p>' : '')
+    + (footerBlock ? '<hr/>' + footerBlock : '');
+}
 
 $('btnFallbackFlagged').onclick = () => {
   const flagged = recipients.filter(r => !r.generic && r.confidence === 'low');
@@ -853,62 +950,72 @@ $('btnSkipSent').onclick = async () => {
     true);
 };
 
-function readFileB64(file) {
-  return new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onload = () => resolve({ filename: file.name, content: String(fr.result).split(',')[1] });
-    fr.onerror = reject;
-    fr.readAsDataURL(file);
-  });
-}
-
-$('composeBtnSend').onclick = async () => {
-  const c = creds();
-  if (!c.gUser || !c.gPass) return say($('composeMsg'), 'Add your Gmail + app password in Section 1.', false);
-  if (!recipients.length) return say($('composeMsg'), 'No recipients — parse them in Section 3.', false);
+/**
+ * The send flow for one mail window — same steps `composeBtnSend` always ran
+ * (de-dupe, warn about repeats, size-check attachments, confirm, start a
+ * campaign row, run the send loop), generalised over `prefix` and the
+ * account it is actually sending as, so the default "compose" window and any
+ * extra per-account window run this exact same code.
+ */
+async function sendFromWindow(prefix, opts) {
+  opts = opts || {};
+  const ownAccount = composeState(prefix).ownAccount;
+  const c = ownAccount ? (function () {
+    const s = session(ownAccount);
+    return { gUser: ownAccount, gPass: s.gPass, fromName: s.fromName, replyTo: s.replyTo, smtpPort: s.smtpPort };
+  })() : creds();
+  const msgEl = $(prefix + 'Msg');
+  if (!c.gUser || !c.gPass) return say(msgEl, 'Add your Gmail + app password in Section 1.', false);
+  let list = instanceRecipients(prefix);
+  if (!list.length) return say(msgEl, 'No recipients — parse them first.', false);
 
   // Final de-duplication guard, in case rows were edited after parsing.
   const uniq = new Map();
-  recipients.forEach(r => { if (!uniq.has(r.email)) uniq.set(r.email, r); });
-  if (uniq.size !== recipients.length) {
-    const dropped = recipients.length - uniq.size;
-    recipients = [...uniq.values()];
-    renderRecipients();
-    say($('composeMsg'), 'Removed ' + dropped + ' duplicate address(es) before sending.', true);
+  list.forEach(r => { if (!uniq.has(r.email)) uniq.set(r.email, r); });
+  if (uniq.size !== list.length) {
+    const dropped = list.length - uniq.size;
+    list = [...uniq.values()];
+    setInstanceRecipients(prefix, list);
+    if (prefix === 'compose') renderRecipients();
+    say(msgEl, 'Removed ' + dropped + ' duplicate address(es) before sending.', true);
   }
 
-  // Warn about anyone who has already received mail in a previous run.
-  const delivered = await sentAddresses();
-  const repeats = recipients.filter(r => delivered.has(r.email));
-  if (repeats.length) {
-    const prev = previousSendsFor(repeats.map(r => r.email));
-    const preview = repeats.slice(0, 5).map(r => {
-      const p = prev[r.email];
-      return p
-        ? r.email + '  ->  "' + p.subject + '"  sent ' + new Date(p.time).toLocaleDateString()
-        : r.email;
-    }).join('\n');
-    const answer = confirm(
-      repeats.length + ' of these have already been delivered to previously:\n\n' + preview
-      + (repeats.length > 5 ? '\n…and ' + (repeats.length - 5) + ' more' : '')
-      + '\n\nOK = skip them and send to the other ' + (recipients.length - repeats.length)
-      + '\nCancel = send to everyone anyway (they get it twice)'
-      + '\n\nTo read the exact email they received, cancel and open Section 5, then View.');
-    if (answer) {
-      recipients = recipients.filter(r => !delivered.has(r.email));
-      renderRecipients();
-      if (!recipients.length) return say($('composeMsg'), 'Everyone on this list has already been sent to.', false);
+  if (!opts.skipRepeatCheck) {
+    // Warn about anyone who has already received mail in a previous run.
+    const delivered = await sentAddresses();
+    const repeats = list.filter(r => delivered.has(r.email));
+    if (repeats.length) {
+      const prev = previousSendsFor(repeats.map(r => r.email));
+      const preview = repeats.slice(0, 5).map(r => {
+        const p = prev[r.email];
+        return p
+          ? r.email + '  ->  "' + p.subject + '"  sent ' + new Date(p.time).toLocaleDateString()
+          : r.email;
+      }).join('\n');
+      const answer = confirm(
+        repeats.length + ' of these have already been delivered to previously:\n\n' + preview
+        + (repeats.length > 5 ? '\n…and ' + (repeats.length - 5) + ' more' : '')
+        + '\n\nOK = skip them and send to the other ' + (list.length - repeats.length)
+        + '\nCancel = send to everyone anyway (they get it twice)'
+        + '\n\nTo read the exact email they received, cancel and open Section 5, then View.');
+      if (answer) {
+        list = list.filter(r => !delivered.has(r.email));
+        setInstanceRecipients(prefix, list);
+        if (prefix === 'compose') renderRecipients();
+        if (!list.length) return say(msgEl, 'Everyone on this list has already been sent to.', false);
+      }
     }
   }
 
-  const files = Array.from($('composeFiles').files);
+  const st = composeState(prefix);
+  const files = $(prefix + 'Files') ? Array.from($(prefix + 'Files').files) : [];
   let totalBytes = files.reduce((a, f) => a + f.size, 0);
-  if (footerImage) totalBytes += footerImage.content.length * 0.75;
-  if (totalBytes > 3.5 * 1024 * 1024) {
+  if (st.footerImage) totalBytes += st.footerImage.content.length * 0.75;
+  if (!opts.skipSizeCheck && totalBytes > 3.5 * 1024 * 1024) {
     if (!confirm('Attachments total ' + (totalBytes / 1048576).toFixed(1) + ' MB. Hosted serverless functions '
       + 'usually cap a request body around 4.5 MB, so this may fail online (it is fine locally). Continue?')) return;
   }
-  if (!confirm('Send to ' + recipients.length + ' recipient(s)?')) return;
+  if (!opts.skipConfirm && !confirm('Send to ' + list.length + ' recipient(s)?')) return;
 
   /* Start a real campaign row before sending anything. Without this, every
      send in this loop would persist with campaign_id = NULL: Section 5 would
@@ -919,7 +1026,8 @@ $('composeBtnSend').onclick = async () => {
     const started = await fetch('/api/campaigns', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        action: 'start', from: c.gUser, subject: $('composeSubject').value, total: recipients.length,
+        action: 'start', from: c.gUser, subject: ($(prefix + 'Subject') || {}).value, total: list.length,
+        groupKey: opts.groupKey || undefined,
       }),
     }).then(x => x.json());
     if (started.ok) campaignId = started.campaignId;
@@ -928,24 +1036,24 @@ $('composeBtnSend').onclick = async () => {
   const attachments = await Promise.all(files.map(readFileB64));
   const base = {
     user: c.gUser, pass: c.gPass, port: c.smtpPort, fromName: c.fromName, replyTo: c.replyTo,
-    cc: $('composeCc').value.trim() || undefined,
-    bcc: $('composeBcc').value.trim() || undefined,
+    cc: (($(prefix + 'Cc') || {}).value || '').trim() || undefined,
+    bcc: (($(prefix + 'Bcc') || {}).value || '').trim() || undefined,
     campaignId,
-    subject: $('composeSubject').value,
-    greeting: $('composeGreeting').value,
-    bodyHtml: bodyHtml(),
-    closing: $('composeClosing').value,
-    footerHtml: $('composeFooterHtml').value,
+    subject: ($(prefix + 'Subject') || {}).value,
+    greeting: ($(prefix + 'Greeting') || {}).value,
+    bodyHtml: bodyHtmlOf(prefix),
+    closing: ($(prefix + 'Closing') || {}).value,
+    footerHtml: ($(prefix + 'FooterHtml') || {}).value,
     fallbackName: $('fallbackName').value || 'there',
     attachments,
-    footerImage: footerImage ? { filename: footerImage.filename, content: footerImage.content } : null,
-    footerImageWidth: $('composeFooterImgW').value,
-    footerImagePosition: $('composeFooterImgPos').value,
-    footerImageLink: $('composeFooterImgLink').value.trim(),
+    footerImage: st.footerImage ? { filename: st.footerImage.filename, content: st.footerImage.content } : null,
+    footerImageWidth: ($(prefix + 'FooterImgW') || {}).value,
+    footerImagePosition: ($(prefix + 'FooterImgPos') || {}).value,
+    footerImageLink: (($(prefix + 'FooterImgLink') || {}).value || '').trim(),
   };
 
-  const delay = Math.max(0, parseInt($('composeDelayMs').value || '800', 10));
-  const total = recipients.length;
+  const delay = Math.max(0, parseInt(($(prefix + 'DelayMs') || {}).value || '800', 10));
+  const total = list.length;
   let sent = 0, failed = 0;
 
   /* Bound to THIS account's session, captured now — even if the user switches
@@ -956,9 +1064,9 @@ $('composeBtnSend').onclick = async () => {
   const acctSession = session(c.gUser);
   acctSession.sending = true;
   acctSession.stopRequested = false;
-  $('composeBtnSend').disabled = true;
-  $('composeBtnStop').classList.remove('hidden');
-  $('composeProgressWrap').classList.remove('hidden');
+  $(prefix + 'BtnSend').disabled = true;
+  if ($(prefix + 'BtnStop')) $(prefix + 'BtnStop').classList.remove('hidden');
+  if ($(prefix + 'ProgressWrap')) $(prefix + 'ProgressWrap').classList.remove('hidden');
   renderAccountList();
 
   /* Opt-in, off by default (Section 1's checkbox) — the account this
@@ -966,15 +1074,15 @@ $('composeBtnSend').onclick = async () => {
      is active on screen. Suppression from a stale reply is checked
      server-side regardless; this only makes it more likely to be fresh. */
   if (acctSession.autoScanOnSend) {
-    say($('composeMsg'), 'Scanning ' + c.gUser + ' for replies first (enabled in Section 1)…', true);
+    say(msgEl, 'Scanning ' + c.gUser + ' for replies first (enabled in Section 1)…', true);
     await scanRepliesFor(c.gUser, 30);
   }
-  say($('composeMsg'), 'Sending… keep this tab open — closing or reloading it stops the campaign.', true);
+  say(msgEl, 'Sending… keep this tab open — closing or reloading it stops the campaign.', true);
 
   let stopped = false;
   for (let i = 0; i < total; i++) {
     if (acctSession.stopRequested) { stopped = true; break; }
-    const r = recipients[i];
+    const r = list[i];
     let entry;
     try {
       const res = await fetch('/api/send', {
@@ -997,9 +1105,11 @@ $('composeBtnSend').onclick = async () => {
     localLog(entry);
     loadAnalytics();   // Section 5 updates live, not just at the end
 
-    $('composeBar').style.width = ((i + 1) / total * 100) + '%';
-    $('composeProgressText').textContent = (i + 1) + ' / ' + total + ' · ' + sent + ' delivered · ' + failed + ' failed'
-      + (entry.status === 'failed' ? ' · last error: ' + entry.error : '');
+    if ($(prefix + 'Bar')) $(prefix + 'Bar').style.width = ((i + 1) / total * 100) + '%';
+    if ($(prefix + 'ProgressText')) {
+      $(prefix + 'ProgressText').textContent = (i + 1) + ' / ' + total + ' · ' + sent + ' delivered · ' + failed + ' failed'
+        + (entry.status === 'failed' ? ' · last error: ' + entry.error : '');
+    }
     /* The account card's status chip shows "sending 7/50" live, not just
        "sending…" — this is what lets several concurrently-sending accounts
        be told apart from a glance at Section 1 without opening either mail
@@ -1020,20 +1130,236 @@ $('composeBtnSend').onclick = async () => {
 
   acctSession.sending = false;
   acctSession.progress = null;
-  $('composeBtnStop').classList.add('hidden');
-  say($('composeMsg'),
+  if ($(prefix + 'BtnStop')) $(prefix + 'BtnStop').classList.add('hidden');
+  say(msgEl,
     (stopped ? '■ Stopped — ' : '✓ Finished — ') + sent + ' delivered, ' + failed + ' failed.'
-      + (stopped || failed ? ' Use "Skip already-sent" in Section 3 before resuming.' : ''),
+      + (stopped || failed ? ' Use "Skip already-sent" before resuming.' : ''),
     !stopped && failed === 0);
-  $('composeBtnSend').disabled = false;
+  $(prefix + 'BtnSend').disabled = false;
   renderAccountList();
   refreshQuota(c.gUser);
   loadAnalytics();
+  return { sent, failed, stopped, campaignId };
+}
+
+mountCompose('compose');
+
+/* ---------- Section 4: sending to several accounts at once ----------
+   The default "compose" window (above) always exists and always sends as
+   whichever account is active in Section 1, exactly as before this existed.
+   Checking an account here mounts a second, independent, full mail window
+   for it — its own recipients, subject, body — rather than fanning one
+   compose form out across accounts, because the existing window already
+   carries too much per-instance state (footer image, draft, toolbar
+   selection) for "one form, many accounts" to mean anything simpler. */
+
+// email -> the prefix its extra window was mounted under, so unchecking can
+// find and remove exactly that window's DOM and instance state.
+const multiAccountWindows = new Map();
+
+function sanitizeForId(email) {
+  return String(email || '').replace(/[^a-zA-Z0-9]/g, '_');
+}
+
+function renderComposeAccountPicker() {
+  const host = $('composeAccountPicker');
+  if (!host) return;
+  const accounts = savedAccountList();
+  // A single saved account has nothing to pick between — showing a
+  // one-item checklist here would just be clutter for the common case.
+  if (accounts.length < 2) { host.innerHTML = ''; return; }
+
+  host.innerHTML = '<p class="hint">Send this same compose window to more than one account at once:</p>'
+    + accounts.map(email => {
+      const checked = multiAccountWindows.has(email) || (email === activeAccountEmail && multiAccountWindows.size === 0 && accounts[0] === email);
+      return '<label class="inline"><input type="checkbox" class="composeAcctCheck" data-email="' + esc(email) + '"'
+        + (checked ? ' checked' : '') + '/> ' + esc(email) + '</label>';
+    }).join(' ');
+
+  host.querySelectorAll('.composeAcctCheck').forEach(cb => cb.onchange = () => {
+    if (cb.checked) mountMultiAccountWindow(cb.dataset.email);
+    else unmountMultiAccountWindow(cb.dataset.email);
+    refreshComposeMultiBox();
+  });
+}
+
+/* Mount an extra full mail window for one account, in addition to the
+   always-there default one. Reuses mountOneMailWindow()/mountCompose() —
+   the exact same stamping and wiring the default window and the follow-up
+   window already go through — so this is one more instance of something
+   that already works, not a new code path. */
+function mountMultiAccountWindow(email) {
+  if (multiAccountWindows.has(email)) return;
+  const host = $('composeExtraWindows');
+  if (!host) return;
+  const prefix = 'compose_' + sanitizeForId(email);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'mailmount';
+  wrap.dataset.prefix = prefix;
+  wrap.dataset.mode = 'campaign';
+  wrap.dataset.email = email;
+  host.appendChild(wrap);
+  mountOneMailWindow(wrap);
+
+  const st = composeState(prefix);
+  st.ownAccount = email;
+  st.ownRecipients = [];   // this window parses its own list — never Section 3's global one
+
+  mountCompose(prefix);
+
+  // Its own paste box + parse button, above its recipient count — Section
+  // 3's parser logic is reused (parseRecipientsFromText), not copied.
+  const pasteWrap = document.createElement('div');
+  pasteWrap.className = 'msection';
+  pasteWrap.innerHTML = '<textarea id="' + prefix + 'RawEmails" rows="4" '
+    + 'placeholder="Paste this account\'s recipients here"></textarea>'
+    + '<div class="row"><button id="' + prefix + 'BtnParse">Parse emails &amp; names</button>'
+    + '<span id="' + prefix + 'ParseMsg" class="msg"></span></div>';
+  wrap.querySelector('.mailhead').insertAdjacentElement('afterend', pasteWrap);
+
+  $(prefix + 'BtnParse').onclick = () => {
+    const { list, dupes } = parseRecipientsFromText($(prefix + 'RawEmails').value);
+    st.ownRecipients = list;
+    say($(prefix + 'ParseMsg'), parseSummary(list, dupes), list.length > 0);
+    refreshComposeMultiBox();
+  };
+
+  const from = $(prefix + 'From');
+  if (from) { from.textContent = email; from.classList.remove('empty'); }
+
+  multiAccountWindows.set(email, prefix);
+}
+
+function unmountMultiAccountWindow(email) {
+  const prefix = multiAccountWindows.get(email);
+  if (!prefix) return;
+  // Unchecking mid-send does not stop it — Stop is still the explicit way to
+  // interrupt a running loop, exactly like closing any other mail window
+  // would not itself cancel an in-flight fetch. The instance state and DOM
+  // are only torn down; the send loop already captured its own closures
+  // (acctSession, body, list) before this can run, so it keeps delivering
+  // to the addresses already queued and simply has nowhere left to render
+  // its progress.
+  const mount = document.querySelector('.mailmount[data-prefix="' + prefix + '"]');
+  if (mount) mount.remove();
+  composeInstances.delete(prefix);
+  multiAccountWindows.delete(email);
+}
+
+/* The combined preview: every recipient across every checked window, in one
+   table, so 2+ accounts get exactly one confirm before any of them sends —
+   reusing renderSinglePreview()'s per-recipient template merge rather than
+   a second rendering path. */
+function refreshComposeMultiBox() {
+  const box = $('composeMultiBox');
+  if (!box) return;
+  if (multiAccountWindows.size < 2) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+
+  const rows = [];
+  multiAccountWindows.forEach((prefix, email) => {
+    const list = instanceRecipients(prefix);
+    list.forEach(r => rows.push({ prefix, email, r }));
+  });
+
+  const tableHost = $('composeMultiPreview');
+  if (!rows.length) {
+    tableHost.innerHTML = '<p class="hint">No recipients parsed yet in any checked window.</p>';
+    return;
+  }
+  /* Subject alone doesn't answer "what will this person actually get" —
+     a per-row "Preview" expands the exact same rendering renderSinglePreview()
+     already does for the single-window Preview button, reused rather than
+     duplicated, so the combined view and the single-window view can never
+     drift apart in what they consider "the real merged email." */
+  tableHost.innerHTML = '<table><thead><tr><th>Account</th><th>To</th><th>Subject</th><th></th></tr></thead><tbody>'
+    + rows.map((x, i) => '<tr class="multiprevrow" data-i="' + i + '">'
+        + '<td class="mono" style="font-size:11px">' + esc(x.email) + '</td>'
+        + '<td>' + esc(x.r.email) + '</td>'
+        + '<td>' + esc(fill(($(x.prefix + 'Subject') || {}).value || '', x.r)) + '</td>'
+        + '<td><button class="multiprev" data-i="' + i + '">Preview</button></td>'
+        + '</tr>'
+        + '<tr class="multiprevexpand hidden" data-i="' + i + '"><td colspan="4"></td></tr>').join('')
+    + '</tbody></table>';
+
+  tableHost.querySelectorAll('.multiprev').forEach(b => b.onclick = () => {
+    const i = +b.dataset.i;
+    const expandRow = tableHost.querySelector('.multiprevexpand[data-i="' + i + '"]');
+    const open = !expandRow.classList.contains('hidden');
+    tableHost.querySelectorAll('.multiprevexpand').forEach(r => r.classList.add('hidden'));
+    if (open) return;
+    expandRow.classList.remove('hidden');
+    renderSinglePreview(rows[i].prefix, rows[i].r, expandRow.querySelector('td'));
+  });
+}
+
+/* One confirm, then every checked window's own already-correct send loop
+   (sendFromWindow) runs — concurrently, each bound to its own account's
+   session exactly as the single compose window and the follow-up window
+   already do (see AccountSession in ARCHITECTURE.md). A shared groupKey
+   ties their campaign rows together for Section 5 without adding any new
+   cross-account send-time coupling. */
+if ($('composeMultiBtnSend')) $('composeMultiBtnSend').onclick = async () => {
+  const entries = [...multiAccountWindows.entries()];   // [email, prefix][]
+  if (entries.length < 2) return;
+
+  const totalRecipients = entries.reduce((n, [, prefix]) => n + instanceRecipients(prefix).length, 0);
+  if (!totalRecipients) return say($('composeMultiMsg'), 'Nobody parsed yet in any checked window.', false);
+  if (!confirm('Send from ' + entries.length + ' accounts to ' + totalRecipients
+    + ' recipient(s) total? Each account only sends to its own parsed list.\n\n'
+    + 'This is the one confirm for all of them — nothing below will ask again.')) return;
+
+  const groupKey = 'grp_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+  say($('composeMultiMsg'), 'Sending from ' + entries.length + ' accounts…', true);
+
+  // Every checked window's send loop starts together and runs concurrently —
+  // each is already isolated by its own account session (AccountSession),
+  // so this is not a new concurrency mechanism, just several existing ones
+  // kicked off at once instead of one at a time.
+  await Promise.all(entries.map(([, prefix]) =>
+    sendFromWindow(prefix, { skipConfirm: true, skipRepeatCheck: false, groupKey })));
+
+  say($('composeMultiMsg'), 'All checked accounts have finished (or stopped).', true);
 };
+
+renderComposeAccountPicker();
+// The account list can change (add/remove/edit in Section 1) without a
+// reload, so the checklist has to be kept in sync the same way it is.
+const _origRenderAccountList = renderAccountList;
+renderAccountList = function () {
+  _origRenderAccountList.apply(this, arguments);
+  renderComposeAccountPicker();
+};
+
+/* Show the exact message a recipient received, merge tags already resolved. */
+function viewSent(i) {
+  const e = logCache[i];
+  if (!e) return;
+  $('modalTitle').textContent = e.subject || '(no subject)';
+  $('modalMeta').innerHTML =
+    '<b>To:</b> ' + esc(e.to) + ' &nbsp;&middot;&nbsp; <b>From:</b> ' + esc(e.from)
+    + ' &nbsp;&middot;&nbsp; ' + new Date(e.time).toLocaleString()
+    + ' &nbsp;&middot;&nbsp; <span class="badge ' + e.status + '">' + e.status + '</span>'
+    + (e.attachments && e.attachments.length
+        ? ' &nbsp;&middot;&nbsp; attached: ' + e.attachments.map(esc).join(', ') : '')
+    + (e.error ? '<br/><span class="msg bad">' + esc(e.error) + '</span>' : '');
+  $('modalBody').innerHTML = e.body
+    ? e.body
+    : '<p class="hint">The body was not recorded for this send &mdash; it predates body logging.</p>';
+  $('modal').classList.remove('hidden');
+}
+
+function closeModal() { $('modal').classList.add('hidden'); $('modalBox').classList.remove('wide'); }
+$('modalClose').onclick = closeModal;
+$('modal').onclick = e => { if (e.target.id === 'modal') closeModal(); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
 /* ---------- live mail-window header ----------
    The From and To lines mirror what Section 1 and Section 3 hold, so the
-   compose window always shows who the message is actually going out as. */
+   default compose window always shows who the message is actually going out
+   as. An extra per-account window (multi-account checklist) shows its own
+   fixed account instead — see mountMultiAccountWindow(). */
 function refreshComposeHeader() {
   const from = $('gUser') ? $('gUser').value.trim() : '';
   const name = $('fromName') ? $('fromName').value.trim() : '';
@@ -1053,24 +1379,28 @@ function refreshComposeHeader() {
   }
 }
 
-/* Collapsed sections say what they hold, so nothing is hidden silently. */
-function refreshComposeSummaries() {
-  const fs = $('composeFooterSummary');
+/* Collapsed sections say what they hold, so nothing is hidden silently.
+   Defaults to 'compose' so every existing call site (input listeners below)
+   needs no change; an extra per-account window passes its own prefix. */
+function refreshComposeSummaries(prefix) {
+  prefix = prefix || 'compose';
+  const st = composeState(prefix);
+  const fs = $(prefix + 'FooterSummary');
   if (fs) {
     const bits = [];
-    if (($('composeFooterHtml').value || '').trim()) bits.push('text');
-    if (footerImage) bits.push('image');
+    if ((($(prefix + 'FooterHtml') || {}).value || '').trim()) bits.push('text');
+    if (st.footerImage) bits.push('image');
     fs.textContent = bits.length ? bits.join(' + ') : 'none';
   }
-  const as = $('composeAttachSummary');
+  const as = $(prefix + 'AttachSummary');
   if (as) {
-    const n = $('composeFiles').files.length;
+    const n = $(prefix + 'Files') ? $(prefix + 'Files').files.length : 0;
     as.textContent = n ? n + ' file' + (n === 1 ? '' : 's') : 'none';
   }
-  const cs = $('composeCcBccSummary');
+  const cs = $(prefix + 'CcBccSummary');
   if (cs) {
-    const cc = ($('composeCc').value || '').trim();
-    const bcc = ($('composeBcc').value || '').trim();
+    const cc = (($(prefix + 'Cc') || {}).value || '').trim();
+    const bcc = (($(prefix + 'Bcc') || {}).value || '').trim();
     const bits = [];
     if (cc) bits.push('Cc: ' + cc);
     if (bcc) bits.push('Bcc: ' + bcc);
@@ -1086,12 +1416,12 @@ if ($('gUser')) $('gUser').addEventListener('change', () => {
   campaignCache = [];
   if (typeof loadCampaigns === 'function') loadCampaigns();
 });
-if ($('composeFooterHtml')) $('composeFooterHtml').addEventListener('input', refreshComposeSummaries);
-if ($('composeFiles')) $('composeFiles').addEventListener('change', refreshComposeSummaries);
-if ($('composeCc')) $('composeCc').addEventListener('input', refreshComposeSummaries);
-if ($('composeBcc')) $('composeBcc').addEventListener('input', refreshComposeSummaries);
+if ($('composeFooterHtml')) $('composeFooterHtml').addEventListener('input', () => refreshComposeSummaries('compose'));
+if ($('composeFiles')) $('composeFiles').addEventListener('change', () => refreshComposeSummaries('compose'));
+if ($('composeCc')) $('composeCc').addEventListener('input', () => refreshComposeSummaries('compose'));
+if ($('composeBcc')) $('composeBcc').addEventListener('input', () => refreshComposeSummaries('compose'));
 refreshComposeHeader();
-refreshComposeSummaries();
+refreshComposeSummaries('compose');
 
 /* Load the real campaign history for whichever Gmail account is in Section 1.
    Scoped by address so two people sharing a browser do not see each other's
@@ -1622,10 +1952,9 @@ function renderTags(tpl, r, fallback) {
    Three levels, because that is how the question is actually asked:
    which campaigns ran -> who was in this one -> what happened with this person.
    The trail merges sends and replies into one ordered conversation, so
-   "they answered the second follow-up" is visible rather than inferred. */
-
-let campaignCache = [];
-let currentCampaign = null;
+   "they answered the second follow-up" is visible rather than inferred.
+   campaignCache/currentCampaign are declared near the top of the file, not
+   here — see that comment for why. */
 
 function fmtWhen(isoStr) {
   if (!isoStr) return '—';

@@ -140,6 +140,16 @@ campaign sent the normal way. The browser now starts a campaign before its
 send loop and finishes it after, exactly as `/api/followup` and `/api/import`
 already do for their own runs.
 
+`start` also takes an optional `groupKey` (any string). Sends are always
+scoped to one account (`sends.sender`, `campaigns.from_email`), so mailing
+several accounts at once from one "send" click still needs one campaign row
+per account — but they were sent as one logical action, and `groupKey` is
+what says so: every account's campaign in that action gets the same value,
+so Section 5 can show them together without inventing cross-account send
+rows that don't exist. `groupKey` is `null` for a campaign started the plain
+single-account way; nothing generates one unless 2+ accounts are checked at
+send time.
+
 ---
 
 ## `GET /api/thread?recipient=<id>`
