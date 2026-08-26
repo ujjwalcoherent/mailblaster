@@ -393,6 +393,28 @@ async function importerTests() {
   await test('empty paste is reported unusable rather than throwing', () => {
     assert.strictEqual(parsePasted('').usable, false);
   });
+  await test('a full pasted BODY (no headers, several lines) becomes a body query, never a fake subject', () => {
+    const p = parsePasted('Hi Anita,\n\nGreat meeting at the event yesterday. I wanted to follow up '
+      + 'on our conversation about the new product line and see if you had any further questions.\n\n'
+      + 'Best,\nAditya');
+    assert.strictEqual(p.subject, null, 'a multi-line body must never be treated as the subject');
+    assert.ok(p.bodyQuery, 'a multi-line body should seed a body search instead');
+    assert.ok(p.usable);
+  });
+  await test('a single long line with no headers is also a body query, not a subject', () => {
+    const longLine = 'This is a much longer line of pasted text that reads like the opening of an '
+      + 'actual email body rather than anything anyone would type as a subject line by hand, '
+      + 'well past what a real subject would ever look like.';
+    assert.ok(longLine.length > 160, 'fixture must actually exceed the body-vs-subject threshold');
+    const p = parsePasted(longLine);
+    assert.strictEqual(p.subject, null);
+    assert.ok(p.bodyQuery && p.bodyQuery.length > 0);
+  });
+  await test('a genuinely short single line still reads as a subject, not a body query', () => {
+    const p = parsePasted('Great meeting at the event');
+    assert.strictEqual(p.bodyQuery, null);
+    assert.strictEqual(p.subject, 'Great meeting at the event');
+  });
 
   group('importer — rebuilding the template');
   const S = (to, body, uid) => ({ uid, to: [to], body });
@@ -456,6 +478,33 @@ async function importerTests() {
     const since = new Date('2026-08-21T00:00:00Z');
     const r = buildSentSearch({ since, query: 'great meeting' });
     assert.deepStrictEqual(r, { since, or: [{ subject: 'great meeting' }, { body: 'great meeting' }] });
+  });
+  await test('a single recipient stays a plain `to`, not a needless one-item OR', () => {
+    assert.deepStrictEqual(buildSentSearch({ to: 'a@x.com' }), { to: 'a@x.com' });
+    assert.deepStrictEqual(buildSentSearch({ to: ['a@x.com'] }), { to: 'a@x.com' });
+  });
+  await test('several recipients become an OR across `to` criteria, matching ANY of them', () => {
+    assert.deepStrictEqual(buildSentSearch({ to: ['a@x.com', 'b@x.com'] }),
+      { or: [{ to: 'a@x.com' }, { to: 'b@x.com' }] });
+  });
+  await test('several recipients AND a query nests the query-OR inside EACH recipient branch, not two competing top-level ORs', () => {
+    const r = buildSentSearch({ to: ['a@x.com', 'b@x.com'], query: 'meeting' });
+    assert.deepStrictEqual(r, {
+      or: [
+        { to: 'a@x.com', or: [{ subject: 'meeting' }, { body: 'meeting' }] },
+        { to: 'b@x.com', or: [{ subject: 'meeting' }, { body: 'meeting' }] },
+      ],
+    });
+  });
+  await test('the multi-recipient search object actually compiles to valid IMAP wire attributes', () => {
+    // Not just "looks plausible" -- run it through ImapFlow's own real
+    // compiler and confirm it doesn't throw and produces real ATOM tokens.
+    const { searchCompiler } = require('imapflow/lib/search-compiler.js');
+    const search = buildSentSearch({ to: ['a@x.com', 'b@x.com', 'c@x.com'], query: 'meeting' });
+    const compiled = searchCompiler({ enabled: new Set() }, search);
+    assert.ok(Array.isArray(compiled) && compiled.length > 0);
+    const values = JSON.stringify(compiled);
+    assert.ok(values.includes('"TO"') && values.includes('"OR"') && values.includes('a@x.com'));
   });
 
   group('importer — plainTextPart() finds the real text/plain part (not RFC 3501 BODY[TEXT])');

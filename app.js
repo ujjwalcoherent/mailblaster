@@ -2869,15 +2869,20 @@ if ($('btnImportScan')) $('btnImportScan').onclick = async () => {
     /* A search by recipient email can only ever see the To: header — a real
        BCC send never carries that address in any header a Sent-folder copy
        keeps, so this is said plainly rather than letting "nothing found"
-       read as "definitely never contacted." */
+       read as "definitely never contacted." Several comma-separated
+       addresses match ANY of them (an OR search — see buildSentSearch()),
+       so the caveat text names all of them rather than assuming there's
+       only one. */
     if (bccCaveat) {
+      const toNames = to.split(',').map(s => s.trim()).filter(Boolean);
+      const toLabel = toNames.length > 1 ? 'any of ' + toNames.join(', ') : toNames[0];
       $('impToCaveat').textContent = importClusters.length
-        ? 'Note: this search only sees the To: header — if ' + to + ' was BCC’d on a campaign, '
+        ? 'Note: this search only sees the To: header — if ' + toLabel + ' was BCC’d on a campaign, '
           + 'it may be sitting in one of these results without being named as a recipient, or may not '
           + 'be found at all. Preview a result to check who it actually names.'
-        : to + ' was not found in the To: header of anything in this range — but a BCC’d send to '
-          + 'them would not show up here either. Try searching by subject/body text instead if you '
-          + 'know roughly what the campaign said.';
+        : toLabel + ' ' + (toNames.length > 1 ? 'were' : 'was') + ' not found in the To: header of anything '
+          + 'in this range — but a BCC’d send to them would not show up here either. Try searching by '
+          + 'subject/body text instead if you know roughly what the campaign said.';
     }
   } catch (e) {
     say($('importMsg'), 'Could not reach the server: ' + e.message, false);

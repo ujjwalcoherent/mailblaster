@@ -54,18 +54,30 @@ module.exports = log.wrap('import', auth.require(async function handler(req, res
    fetching bodies just to draw a list would be slow and pointless. */
 async function scan(b, res) {
   let subject = b.subject || null;
+  let query = b.query || null;
+
+  /* b.to is a comma-separated string from the UI (one recipient, or
+     several — "find a campaign sent to any of these people"), parsed into
+     a list here rather than asking the browser to send an array, so the
+     request body stays plain and matches every other string field. */
+  const toList = String(b.to || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
   /* "Paste an email" is the same scan, seeded from whatever headers the paste
-     contained — a Message-Id if we are lucky, the subject line if not. */
+     contained — a Message-Id if we are lucky, the subject line if not, or
+     (a full body with no headers, e.g. someone pasted the whole message
+     text rather than just its subject) a body-search fragment. A long,
+     multi-line paste is never forced into an exact-subject search it was
+     never meant for — see parsePasted()'s own doc comment for why. */
   let pasted = null;
   if (b.pasted) {
     pasted = parsePasted(b.pasted);
     if (!pasted.usable) {
       return send(res, 400, describe('BAD_REQUEST', {
-        error: 'Could not find a subject or Message-Id in that text.',
+        error: 'Could not find a subject, Message-Id, or enough body text in that paste.',
       }));
     }
     subject = subject || pasted.subject;
+    query = query || pasted.bodyQuery;
   }
 
   /* Two ways to say "how far back": an explicit date range (b.since/b.until,
@@ -95,7 +107,7 @@ async function scan(b, res) {
   const result = await imap.scanSent({
     user: b.user, pass: b.pass,
     since, until,
-    subject, query: b.query || null, to: b.to || null,
+    subject, query, to: toList.length ? toList : null,
     cursor: b.cursor || null,
     deadline: Date.now() + BUDGET_MS,
   });
@@ -153,7 +165,7 @@ async function scan(b, res) {
      contains any BCC-likely message (recipients hidden), since that
      cluster's real recipient list may include the person being searched
      for even though the match came from elsewhere in the burst. */
-  if (b.to) {
+  if (toList.length) {
     clusters.forEach(c => { c.bccInCluster = result.messages.some(m => c.uids.includes(m.uid) && m.bccLikely); });
   }
 
@@ -166,8 +178,8 @@ async function scan(b, res) {
     ok: true, mailbox: result.mailbox, examined: result.examined,
     total: result.total, done: result.done, cursor: result.cursor,
     pasted, clusters,
-    matchedVia: { subject: !!subject, query: !!b.query, to: !!b.to, since: !!since, until: !!until },
-    bccCaveat: !!b.to,   // whether this scan's `to` search cannot see BCC-only recipients
+    matchedVia: { subject: !!subject, query: !!query, to: toList.length > 0, since: !!since, until: !!until },
+    bccCaveat: toList.length > 0,   // whether this scan's `to` search cannot see BCC-only recipients
   });
 }
 

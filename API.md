@@ -406,14 +406,15 @@ onto the latest round rather than the very first message.
 { "action": "scan", "user": "...", "pass": "...",
   "since": "2026-08-21", "until": "2026-08-26",
   "query": "great meeting at the event",
-  "to": "person@company.com" }
+  "to": "person@company.com, other@company.com" }
 ```
 
 | Field | Meaning |
 |---|---|
 | `since` / `until` | Plain `YYYY-MM-DD` calendar dates. Take priority over the older relative `days` lookback when given. |
 | `query` | Free text searched against **subject OR body**, server-side, in the same IMAP round trip — not a separate fetch-and-filter pass. |
-| `to` | Find every campaign ever sent to this recipient — an IMAP `TO` search, server-side. |
+| `to` | Find every campaign ever sent to any of these recipients — a comma-separated string of one or more addresses, matched as an IMAP `OR` across `TO` criteria, server-side. A single address is a plain `TO` search, no OR overhead. |
+| `pasted` | The raw text of an email pasted in instead of typing a subject/date range by hand. `lib/importer.js`'s `parsePasted()` reads `Message-ID:`/`Subject:`/`To:` header lines if present. With no headers at all: a short single line is treated as the subject; several lines, or one line over ~160 characters, is treated as the actual BODY of the email (not forced into an exact-subject search it would never match) and instead seeds `query` — a subject-or-body search — with the message's own opening text. |
 
 The response adds:
 
