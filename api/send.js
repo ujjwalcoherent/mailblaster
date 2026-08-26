@@ -106,6 +106,8 @@ module.exports = log.wrap('send', auth.require(async function handler(req, res) 
     const info = await t.sendMail({
       from: b.fromName ? '"' + b.fromName + '" <' + b.user + '>' : b.user,
       to: r.email,
+      cc: b.cc || undefined,
+      bcc: b.bcc || undefined,
       subject,
       html,
       text: stripHtml(html),

@@ -50,6 +50,23 @@
         <input data-id="Subject" type="text" placeholder="Quick note for {{name}}"/>
         <span class="msubject-locked hidden" data-id="SubjectLocked"></span>
       </div>
+      <!-- One fixed Cc/Bcc on every send in this run, not a per-recipient
+           field: each request to /api/send is one email to one person, so
+           "Cc" here means "also copy this address on every one of THOSE
+           individual emails" (e.g. a manager who wants every outreach
+           copied to them), not a second recipient added to a shared
+           message. Collapsed by default since most sends need neither. -->
+      <details class="msection" data-id="CcBccBox">
+        <summary>Cc / Bcc <small data-id="CcBccSummary">none</small></summary>
+        <div class="msectionbody">
+          <label class="mfield">Cc <small>comma-separated, copied on every individual send in this run</small>
+            <input data-id="Cc" type="text" placeholder="manager@company.com"/>
+          </label>
+          <label class="mfield">Bcc <small>comma-separated, hidden from the recipient</small>
+            <input data-id="Bcc" type="text" placeholder="archive@company.com"/>
+          </label>
+        </div>
+      </details>
     </div>
 
     <div class="toolbar">

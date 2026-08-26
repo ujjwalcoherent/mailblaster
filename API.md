@@ -197,6 +197,7 @@ the UI gets live per-recipient progress.
   "subject": "Hi {{name}}", "greeting": "Hi {{name}},",
   "bodyHtml": "<p>…</p>", "closing": "Warm regards,",
   "attachments": [ { "filename": "a.pdf", "content": "<base64>" } ],
+  "cc": "manager@company.com", "bcc": "archive@company.com",
 
   "campaignId": 12,
   "followupRound": 0,
@@ -204,6 +205,17 @@ the UI gets live per-recipient progress.
   "references": ["<original@mail>"]
 }
 ```
+
+**Cc/Bcc are fixed for the whole run, not per-recipient.** Since this
+endpoint sends one email to one person per call, `cc`/`bcc` here means "also
+copy this address on every individual send in this campaign" (e.g. a manager
+who wants every outreach copied to them) — not a second recipient sharing
+one message with everyone else. Accepts anything nodemailer's own address
+parser does: a single address, or several comma-separated in one string.
+Passed straight through to `nodemailer`'s `sendMail()` as its own `cc`/`bcc`
+options — no custom parsing on this side, confirmed against nodemailer's own
+source (`lib/mailer/mail-message.js`), which treats `cc`/`bcc` identically to
+`to` for address resolution. Omit either to send neither.
 
 **Threading.** A follow-up is a reply in the original thread, not a new
 message. Gmail nests it only when `inReplyTo` and `references` carry the

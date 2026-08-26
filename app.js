@@ -928,6 +928,8 @@ $('composeBtnSend').onclick = async () => {
   const attachments = await Promise.all(files.map(readFileB64));
   const base = {
     user: c.gUser, pass: c.gPass, port: c.smtpPort, fromName: c.fromName, replyTo: c.replyTo,
+    cc: $('composeCc').value.trim() || undefined,
+    bcc: $('composeBcc').value.trim() || undefined,
     campaignId,
     subject: $('composeSubject').value,
     greeting: $('composeGreeting').value,
@@ -1065,6 +1067,15 @@ function refreshComposeSummaries() {
     const n = $('composeFiles').files.length;
     as.textContent = n ? n + ' file' + (n === 1 ? '' : 's') : 'none';
   }
+  const cs = $('composeCcBccSummary');
+  if (cs) {
+    const cc = ($('composeCc').value || '').trim();
+    const bcc = ($('composeBcc').value || '').trim();
+    const bits = [];
+    if (cc) bits.push('Cc: ' + cc);
+    if (bcc) bits.push('Bcc: ' + bcc);
+    cs.textContent = bits.length ? bits.join(' · ') : 'none';
+  }
 }
 
 ['gUser', 'fromName'].forEach(id => {
@@ -1077,6 +1088,8 @@ if ($('gUser')) $('gUser').addEventListener('change', () => {
 });
 if ($('composeFooterHtml')) $('composeFooterHtml').addEventListener('input', refreshComposeSummaries);
 if ($('composeFiles')) $('composeFiles').addEventListener('change', refreshComposeSummaries);
+if ($('composeCc')) $('composeCc').addEventListener('input', refreshComposeSummaries);
+if ($('composeBcc')) $('composeBcc').addEventListener('input', refreshComposeSummaries);
 refreshComposeHeader();
 refreshComposeSummaries();
 
@@ -1436,6 +1449,8 @@ async function runSendLoop(opts) {
   const base = {
     user: opts.creds.gUser, pass: opts.creds.gPass, port: opts.creds.smtpPort,
     fromName: opts.creds.fromName, replyTo: opts.creds.replyTo,
+    cc: (($(p + 'Cc') || {}).value || '').trim() || undefined,
+    bcc: (($(p + 'Bcc') || {}).value || '').trim() || undefined,
     campaignId: opts.campaignId,
     followupRound: opts.followupRound || 0,
     greeting: ($(p + 'Greeting') || {}).value || '',

@@ -220,8 +220,11 @@ label.chk small.hint { display: block; margin-top: 1px; }
 .mailsheet .editor:focus { box-shadow: none; background: #fbfcff; }
 .mrule { border: none; border-top: 1px solid #eceff6; margin: 12px 0 4px; }
 
-/* --- collapsed extras: signature, attachments --- */
+/* --- collapsed extras: signature, attachments, Cc/Bcc --- */
 .msection { border-top: 1px solid #f2f4f9; }
+.mailhead .msection { border-top: none; border-bottom: 1px solid #f2f4f9; padding: 0 14px; }
+.mailhead .msection:last-child { border-bottom: none; }
+.mailhead .msectionbody { padding-bottom: 12px; }
 .msection summary {
   cursor: pointer; padding: 9px 0; font-size: 13px; font-weight: 600; color: #444b63;
   list-style: none; display: flex; align-items: center; gap: 8px;
