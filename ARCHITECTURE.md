@@ -126,10 +126,18 @@ lowercased email, holding its own `sending`/`stopRequested`/credentials. A
 send loop binds to the session of the account it was actually started
 for — captured once at the top of the loop — not to whichever account
 happens to be the one showing in Section 1 by the time a later iteration
-runs. Section 1 itself becomes a list of account cards rather than one form;
-editing an account swaps which session the shared form is currently a view
-of, the same way the mail-window template is one definition cloned per
-purpose. Section 5's campaign list defaults to showing every saved account
+runs. Section 1 itself becomes a list of account cards rather than one
+permanently-open form; editing an account swaps which session the shared
+form is currently a view of, the same way the mail-window template is one
+definition cloned per purpose. The form itself stays hidden once at least
+one account is saved — opened deliberately by "+ Add another account" or a
+card's own "Edit," closed again by Cancel or a successful Verify — so
+Section 1's default view is the compact card list, not a wall of fields
+regardless of whether there's one account or several. A brand-new install
+with nothing saved opens the form automatically, since a list with zero
+cards and no visible way to add one would be a dead end.
+
+Section 5's campaign list defaults to showing every saved account
 together (an empty `owner` on `/api/campaigns` already meant "everyone" —
 the browser just never asked for it that way before), so checking on several
 running campaigns doesn't mean switching accounts one at a time.

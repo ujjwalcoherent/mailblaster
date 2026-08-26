@@ -154,40 +154,57 @@
     <span id="accountMsg" class="msg" role="status" aria-live="polite"></span>
   </div>
 
-  <h3>Editing <span id="editingAccountLabel">— new account —</span></h3>
-  <p class="hint">Use a Google <b>App Password</b> (16 characters), not your normal password.
-     Enable 2-Step Verification, then create one at
-     <span class="mono">myaccount.google.com → Security → App passwords</span>.</p>
+  <!-- Hidden by default once at least one account is saved (see app.js's
+       showAccountForm()/hideAccountForm()) — "+ Add another account" above
+       and a card's own "Edit" button are what open it. A brand-new install
+       with nothing saved yet opens it automatically, so the very first run
+       isn't a list with nothing to click. -->
+  <div id="accountFormBox" class="hidden">
+    <h3>Editing <span id="editingAccountLabel">— new account —</span></h3>
+    <p class="hint">Use a Google <b>App Password</b> (16 characters), not your normal password.
+       Enable 2-Step Verification, then create one at
+       <span class="mono">myaccount.google.com → Security → App passwords</span>.</p>
 
-  <div class="grid2">
-    <label>Gmail address
-      <input id="gUser" type="email" placeholder="you@gmail.com" autocomplete="username"/>
-    </label>
-    <label>App password
-      <input id="gPass" type="password" placeholder="abcd efgh ijkl mnop" autocomplete="current-password"/>
-    </label>
-    <label>Display name (From)
-      <input id="fromName" type="text" placeholder="Aditya Jha"/>
-    </label>
-    <label>Reply-To (optional)
-      <input id="replyTo" type="email" placeholder="reply@company.com"/>
-    </label>
-    <label>SMTP port
-      <select id="smtpPort">
-        <option value="587">587 — STARTTLS (default, most reliable)</option>
-        <option value="465">465 — SSL (often blocked on corporate networks)</option>
-      </select>
-    </label>
+    <div class="grid2">
+      <label>Gmail address
+        <input id="gUser" type="email" placeholder="you@gmail.com" autocomplete="username"/>
+      </label>
+      <label>App password
+        <input id="gPass" type="password" placeholder="abcd efgh ijkl mnop" autocomplete="current-password"/>
+      </label>
+      <label>Display name (From)
+        <input id="fromName" type="text" placeholder="Aditya Jha"/>
+      </label>
+      <label>Reply-To (optional)
+        <input id="replyTo" type="email" placeholder="reply@company.com"/>
+      </label>
+    </div>
+
+    <details class="msection" id="acctAdvancedBox">
+      <summary>Advanced <small>SMTP port, auto-scan, remember on this browser</small></summary>
+      <div class="msectionbody">
+        <label class="mfield">SMTP port
+          <select id="smtpPort">
+            <option value="587">587 — STARTTLS (default, most reliable)</option>
+            <option value="465">465 — SSL (often blocked on corporate networks)</option>
+          </select>
+        </label>
+        <label class="inline"><input id="remember" type="checkbox" checked/> Remember on this browser (stored locally)</label>
+        <label class="inline"><input id="autoScanOnSend" type="checkbox"/> Scan this account's inbox for replies before every send
+          <small class="hint">Off by default: this adds a real network round-trip before every campaign or follow-up starts, and if the scan itself is slow or fails, so does the delay before sending. "Scan for replies" in Section 6 does the same thing on demand — this just does it automatically for this one account.</small>
+        </label>
+      </div>
+    </details>
+
+    <div class="row">
+      <button id="btnVerify" class="primary">Verify connection</button>
+      <button id="btnCancelAccountEdit">Cancel</button>
+      <span id="verifyMsg" class="msg"></span>
+    </div>
   </div>
 
-  <label class="inline"><input id="remember" type="checkbox" checked/> Remember on this browser (stored locally)</label>
-
-  <label class="inline"><input id="autoScanOnSend" type="checkbox"/> Scan this account's inbox for replies before every send
-    <small class="hint">Off by default: this adds a real network round-trip before every campaign or follow-up starts, and if the scan itself is slow or fails, so does the delay before sending. "Scan for replies" in Section 6 does the same thing on demand — this just does it automatically for this one account.</small>
-  </label>
-
   <details class="msection" id="apiKeyBox">
-    <summary>API key <small id="apiKeyState">not required here</small></summary>
+    <summary>Deployment API key <small id="apiKeyState">not required here</small></summary>
     <div class="msectionbody">
       <p class="hint">A hosted deployment sets <span class="mono">MAILBLASTER_API_KEY</span> so its
          campaign history cannot be read or deleted by anyone who knows the URL. Paste that value
@@ -202,11 +219,6 @@
       </div>
     </div>
   </details>
-
-  <div class="row">
-    <button id="btnVerify" class="primary">Verify connection</button>
-    <span id="verifyMsg" class="msg"></span>
-  </div>
 </section>
 
 <!-- ============ SECTION 2 : RECONSTRUCT A PAST CAMPAIGN ============ -->

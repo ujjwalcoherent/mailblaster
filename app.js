@@ -250,6 +250,16 @@ function fillAccountForm(email) {
   $('editingAccountLabel').textContent = email || '— new account —';
 }
 
+/* The add/edit form stays hidden once at least one account exists, so
+   Section 1's default view is just the compact card list — opened
+   deliberately by "+ Add another account" or a card's own "Edit", and
+   closed again after a successful Verify or Cancel. A fresh install with
+   nothing saved yet opens it automatically (see restore(), below), since a
+   list with nothing on it and no visible way to add anything would be a
+   dead end. */
+function showAccountFormBox() { if ($('accountFormBox')) $('accountFormBox').classList.remove('hidden'); }
+function hideAccountFormBox() { if ($('accountFormBox')) $('accountFormBox').classList.add('hidden'); }
+
 function persist() {
   const c = creds();
   if (!c.gUser) return;
@@ -308,7 +318,7 @@ function renderAccountList() {
       + '</div>';
   }).join('');
 
-  host.querySelectorAll('.edit').forEach(b => b.onclick = () => selectAccount(b.dataset.email));
+  host.querySelectorAll('.edit').forEach(b => b.onclick = () => { selectAccount(b.dataset.email); showAccountFormBox(); });
   host.querySelectorAll('.remove').forEach(b => b.onclick = () => removeAccount(b.dataset.email));
 }
 
@@ -364,12 +374,26 @@ function removeAccount(email) {
 if ($('btnAddAccount')) $('btnAddAccount').onclick = () => {
   activeAccountEmail = '';
   fillAccountForm('');
+  showAccountFormBox();
   $('gUser').focus();
   renderAccountList();
 };
 
+if ($('btnCancelAccountEdit')) $('btnCancelAccountEdit').onclick = () => {
+  hideAccountFormBox();
+  // Re-show whichever account was actually last active, discarding an
+  // unsaved edit or an abandoned "add another" the same way closing the
+  // form implies.
+  const list = savedAccountList();
+  if (activeAccountEmail && list.includes(activeAccountEmail)) fillAccountForm(activeAccountEmail);
+  else if (list.length) selectAccount(list[0]);
+};
+
 /* Restore every previously saved account so their cards show up immediately,
-   then activate whichever was last active (or the first one saved). */
+   then activate whichever was last active (or the first one saved). Nothing
+   saved yet means the form has nothing to hide behind, so it opens by
+   default — a card list with zero cards and no visible way to add one
+   would be a dead end. */
 (function restore() {
   const list = savedAccountList();
   list.forEach(email => {
@@ -379,7 +403,7 @@ if ($('btnAddAccount')) $('btnAddAccount').onclick = () => {
       smtpPort: c.smtpPort || '587', autoScanOnSend: !!c.autoScanOnSend });
   });
   if (list.length) selectAccount(list[0]);
-  else renderAccountList();
+  else { renderAccountList(); showAccountFormBox(); }
 })();
 
 $('btnVerify').onclick = async () => {
@@ -398,13 +422,16 @@ $('btnVerify').onclick = async () => {
     if (s) s.lastError = r.ok ? null : (r.error || 'verification failed');
     persist();
     if (c.gUser) refreshQuota(c.gUser);
+    // A successful Verify means this account is fully set up — the form
+    // has done its job, so it closes back down to the compact card list.
+    if (r.ok) hideAccountFormBox();
   } catch (e) {
     say($('verifyMsg'), '✗ ' + e.message, false);
   }
   b.disabled = false;
 };
 
-/* ================= SECTION 2 — recipients & salutations ================= */
+/* ================= SECTION 3 — recipients & salutations ================= */
 
 const GENERIC = new Set(['info', 'admin', 'hr', 'contact', 'sales', 'support', 'team', 'office',
   'careers', 'career', 'hello', 'hi', 'mail', 'email', 'enquiry', 'enquiries', 'inquiry', 'help',
@@ -538,7 +565,7 @@ function renderRecipients() {
   });
 }
 
-/* ================= SECTION 3 — compose ================= */
+/* ================= SECTION 4 — compose ================= */
 
 /* Footer image, held as base64 so it survives a page reload with the rest of
    the draft. Declared up here because the draft-restore IIFE below reads it.
@@ -1576,7 +1603,7 @@ function renderTags(tpl, r, fallback) {
     .replace(/\{\{\s*email\s*\}\}/gi, esc(r.email || ''));
 }
 
-/* ================= SECTION 4 — campaigns =================
+/* ================= SECTION 5 — campaigns =================
    Three levels, because that is how the question is actually asked:
    which campaigns ran -> who was in this one -> what happened with this person.
    The trail merges sends and replies into one ordered conversation, so
@@ -1872,7 +1899,7 @@ async function toggleTrailRow(host, trail, i) {
   }
 }
 
-/* ================= SECTION 5 — replies =================
+/* ================= SECTION 6 — replies =================
    The stat tiles double as the filter: they are the only summary on screen,
    so making them the control removes a redundant row of pills and keeps the
    count and the filter in one place. */
@@ -1972,7 +1999,7 @@ document.querySelectorAll('button.stat[data-kind]').forEach(b => {
 renderReplyStats();
 renderReplyList();
 
-/* ================= SECTION 4 — analytics ================= */
+/* ================= SECTION 5 (cont.) — analytics ================= */
 /* Every send is recorded in localStorage; when the app runs somewhere with a
    writable disk (i.e. locally) the same rows are also archived in SQLite and
    that copy wins, so history survives clearing the browser. */
@@ -2076,17 +2103,14 @@ $('btnExport').onclick = () => {
 
 loadAnalytics();
 
-/* ================= SECTION 4 (cont.) — finding campaigns sent before this
-   tool, or under a subject that varied per recipient =================
+/* ================= SECTION 2 — reconstructing a past campaign =================
 
-   The endpoint (api/import.js) has existed since before this UI did --
-   ARCHITECTURE.md's own "Known gaps" said as much ("No import UI. The
-   endpoint works; nothing drives it yet."). This wires it up: search Sent by
-   date range and/or a subject-or-body text fragment -> cluster the results
-   into candidate campaigns with a confidence and a reason (never silently) ->
-   preview the rebuilt template for the chosen cluster -> commit it into this
-   app's own history, after which it behaves exactly like a campaign sent
-   from here (follow-ups, suppression, the full thread view all just work). */
+   Search Sent by date range, a subject-or-body text fragment, and/or the
+   recipient's email -> cluster the results into candidate campaigns with a
+   confidence and a reason (never silently) -> preview the rebuilt template
+   for the chosen cluster -> commit it into this app's own history, after
+   which it behaves exactly like a campaign sent from here (follow-ups,
+   suppression, the full thread view all just work). */
 
 let importClusters = [];
 let importMailbox = null;
