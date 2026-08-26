@@ -230,8 +230,8 @@ function goToSection(tabId) {
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => goToSection(t.dataset.tab));
 document.querySelectorAll('.wstep').forEach(t => t.onclick = () => {
   goToSection(t.dataset.tab);
-  if (t.dataset.substep === 'review') { composeSubstep = 'review'; scrollToComposePreview(); }
-  else if (t.dataset.substep === 'send') { composeSubstep = 'send'; scrollToComposeSend(); }
+  if (t.dataset.substep === 'review') { composeSubstep = 'review'; jumpToComposeReview(); }
+  else if (t.dataset.substep === 'send') { composeSubstep = 'send'; jumpToComposeSend(); }
   else if (t.dataset.tab === 's4') composeSubstep = 'compose';
   refreshWizardSteps();
 });
@@ -267,17 +267,31 @@ function refreshWizardSteps() {
 refreshWizardSteps();
 
 /* Review and Send aren't separate panels — they're further down the SAME
-   compose panel (s4) — so "jump to this step" means scroll-into-view, not
-   switch panels. Falls back to the compose window's Send button when
-   nothing's been previewed yet, so "Review" is never a dead click before a
-   recipient list exists. */
-function scrollToComposePreview() {
+   compose panel (s4) — so clicking either step must DO the thing, not just
+   scroll toward a button and leave the click for you: a scroll to a button
+   already in view produces no visible motion at all, which reads as "this
+   step does nothing." Review actually renders the preview (using the first
+   parsed recipient, exactly what the Preview button itself does) rather
+   than waiting for a second click on a button it just scrolled past. */
+function jumpToComposeReview() {
+  const list = instanceRecipients('compose');
   const el = $('preview');
-  if (el && !el.classList.contains('hidden')) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  else if ($('composeBtnPreview')) $('composeBtnPreview').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (list.length && el) {
+    renderSinglePreview('compose', list[0], el);
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } else {
+    say($('composeMsg'), 'Parse some recipients first (Step 1), then Review will show what they’ll actually receive.', false);
+    if ($('composeBtnPreview')) $('composeBtnPreview').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 }
-function scrollToComposeSend() {
-  if ($('composeBtnSend')) $('composeBtnSend').scrollIntoView({ behavior: 'smooth', block: 'center' });
+function jumpToComposeSend() {
+  const btn = $('composeBtnSend');
+  if (!btn) return;
+  btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // A scroll to a button already on screen has no visible motion at all —
+  // flash it so clicking "Send" from the step strip is never silent.
+  btn.classList.add('flash');
+  setTimeout(() => btn.classList.remove('flash'), 900);
 }
 
 function say(el, text, ok) {

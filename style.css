@@ -7,8 +7,12 @@ body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system
 .mono{font-family:Consolas,Menlo,monospace;font-size:12.5px;background:#eef1f8;padding:1px 5px;border-radius:4px}
 
 .topbar{position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid var(--line);
-  display:flex;align-items:center;gap:24px;padding:10px 22px;flex-wrap:wrap}
+  display:flex;align-items:center;gap:16px;padding:10px 22px;flex-wrap:wrap;row-gap:8px}
 .brand{font-weight:700;font-size:17px;flex:none}
+@media(max-width:960px){
+  .topbar{gap:10px}
+  .tabs.persistent{margin-left:0;width:100%;order:99;justify-content:flex-end}
+}
 .tabs{display:flex;gap:6px;flex-wrap:wrap}
 .tab{background:transparent;border:1px solid transparent;padding:7px 14px;border-radius:8px;
   cursor:pointer;font-weight:600;color:var(--muted)}
@@ -86,6 +90,8 @@ button.primary{background:var(--brand);border-color:var(--brand);color:#fff}
 button.primary:hover{background:var(--brand-dk)}
 button.danger{color:var(--bad);border-color:#f2caca}
 button:disabled{opacity:.55;cursor:not-allowed}
+@keyframes flashring{0%,100%{box-shadow:0 0 0 0 rgba(59,91,219,0)}50%{box-shadow:0 0 0 6px rgba(59,91,219,.35)}}
+button.flash{animation:flashring .9s ease-in-out}
 .msg{font-size:12.5px;font-weight:600}
 .msg.ok{color:var(--ok)} .msg.bad{color:var(--bad)}
 .hidden{display:none !important}
