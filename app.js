@@ -361,6 +361,32 @@ function fillAccountForm(email) {
   $('smtpPort').value = s.smtpPort || '587';
   if ($('autoScanOnSend')) $('autoScanOnSend').checked = !!s.autoScanOnSend;
   $('editingAccountLabel').textContent = email || '— new account —';
+
+  /* This browser may not have the password (fresh browser, cleared storage,
+     or it was only ever saved server-side) even though the account is known
+     server-side. Fetch it once and fill the field in — the whole point of
+     saving to the database is that editing display name / reply-to never
+     forces the app password to be typed in again. Fired after the
+     synchronous fill above so the field is never left showing a stale value
+     while this is in flight; guarded by whichever account is still open by
+     the time it resolves, so switching accounts mid-fetch can't stomp the
+     next one's field. */
+  if (email && !s.gPass) {
+    fetchSavedAccountPassword(email);
+  }
+}
+
+async function fetchSavedAccountPassword(email) {
+  try {
+    const r = await fetch('/api/accounts?email=' + encodeURIComponent(email) + '&reveal=1').then(x => x.json());
+    if (r && r.ok && r.account && r.account.password) {
+      const s = session(email);
+      s.gPass = r.account.password;
+      if (activeAccountEmail === email && $('gUser').value.trim().toLowerCase() === email) {
+        $('gPass').value = s.gPass;
+      }
+    }
+  } catch (e) { /* no saved server-side copy, or DB unavailable — the form just stays blank */ }
 }
 
 /* The add/edit form stays hidden once at least one account exists, so
@@ -486,10 +512,13 @@ function removeAccount(email) {
   if (s && s.sending) {
     return alert('"' + email + '" is still sending. Stop that campaign before removing the account.');
   }
-  if (!confirm('Remove ' + email + ' from this browser? Its send history on the server is untouched — this only forgets the saved credentials here.')) return;
+  const alsoServer = confirm('Remove ' + email + '?\n\nOK = forget it everywhere (this browser AND the saved copy other devices can see).\nCancel = forget it on this browser only.\n\nEither way, its send history on the server is untouched.');
   saveAccountList(savedAccountList().filter(e => e !== email));
   try { localStorage.removeItem(acctCredsKey(email)); } catch (e) {}
   sessions.delete(email);
+  if (alsoServer) {
+    fetch('/api/accounts?email=' + encodeURIComponent(email), { method: 'DELETE' }).catch(() => {});
+  }
   if (activeAccountEmail === email) {
     const remaining = savedAccountList();
     selectAccount(remaining[0] || '');
@@ -531,6 +560,29 @@ if ($('btnCancelAccountEdit')) $('btnCancelAccountEdit').onclick = () => {
   });
   if (list.length) selectAccount(list[0]);
   else { renderAccountList(); showAccountFormBox(); }
+
+  /* Accounts saved from a DIFFERENT browser only exist server-side, so this
+     browser's own localStorage list is silent about them on a first load.
+     Fetch the metadata (never the password — fillAccountForm() fetches that
+     lazily, only for whichever account is actually opened) and fold in any
+     email this browser doesn't already know about, so every device sees the
+     same set of accounts rather than one device silently missing some. */
+  fetch('/api/accounts').then(x => x.json()).then(r => {
+    if (!r || !r.ok || !Array.isArray(r.accounts) || !r.accounts.length) return;
+    const known = new Set(savedAccountList());
+    let added = false;
+    r.accounts.forEach(a => {
+      const s = session(a.email);
+      Object.assign(s, { fromName: s.fromName || a.fromName, replyTo: s.replyTo || a.replyTo,
+        smtpPort: s.smtpPort || a.smtpPort, autoScanOnSend: s.autoScanOnSend || a.autoScanOnSend });
+      if (!known.has(a.email)) { known.add(a.email); added = true; }
+    });
+    if (added) {
+      saveAccountList([...known]);
+      renderAccountList();
+      if (!activeAccountEmail) selectAccount([...known][0]);
+    }
+  }).catch(() => {});
 })();
 
 $('btnVerify').onclick = async () => {
@@ -556,6 +608,21 @@ $('btnVerify').onclick = async () => {
        up the moment the account is usable, not only after separately
        clicking over to Activity and hoping it's already loaded. */
     if (r.ok && typeof loadCampaigns === 'function') loadCampaigns();
+    /* Verified credentials are saved server-side (encrypted) the moment they
+       are known good, so the app password never has to be typed in again on
+       any browser or device — editing the display name later, or opening
+       this account on a new machine, both just work. Best-effort: a DB
+       outage or a deployment with no ACCOUNTS_ENCRYPTION_KEY must not block
+       using the account locally, only the cross-device convenience. */
+    if (r.ok && c.gUser && c.gPass) {
+      fetch('/api/accounts', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: c.gUser, password: c.gPass, fromName: c.fromName, replyTo: c.replyTo,
+          smtpPort: c.smtpPort, autoScanOnSend: !!($('autoScanOnSend') && $('autoScanOnSend').checked),
+        }),
+      }).catch(() => {});
+    }
     // A successful Verify means this account is fully set up — the form
     // has done its job, so it closes back down to the compact card list.
     if (r.ok) hideAccountFormBox();

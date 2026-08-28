@@ -140,3 +140,19 @@ CREATE INDEX IF NOT EXISTS idx_sends_sender_time ON sends(sender, time DESC);
 CREATE INDEX IF NOT EXISTS idx_campaigns_parent   ON campaigns(parent_id) WHERE parent_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_recip_followups    ON recipients(followup_count);
 CREATE INDEX IF NOT EXISTS idx_campaigns_group_key ON campaigns(group_key) WHERE group_key IS NOT NULL;
+
+-- Saved Gmail accounts, so a second browser/device does not need the app
+-- password re-entered. app_password_enc is AES-256-GCM ciphertext (see
+-- lib/crypto.js) — never plaintext — and every row requires
+-- ACCOUNTS_ENCRYPTION_KEY to be set, so a deployment without that key simply
+-- cannot write here.
+CREATE TABLE IF NOT EXISTS accounts (
+  email             TEXT PRIMARY KEY,
+  app_password_enc  TEXT NOT NULL,
+  from_name         TEXT,
+  reply_to          TEXT,
+  smtp_port         TEXT NOT NULL DEFAULT '587',
+  auto_scan_on_send BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
