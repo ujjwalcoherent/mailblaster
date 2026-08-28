@@ -93,6 +93,25 @@ module.exports = log.wrap('send', auth.require(async function handler(req, res) 
     references: Array.isArray(b.references) ? b.references : (b.references ? [b.references] : []),
   };
 
+  /* Claim the (campaignId, recipient) slot BEFORE dialing Gmail. Checking for
+     a duplicate only after sendMail() — the previous order — meant the UNIQUE
+     index could only stop a second DATABASE ROW, never a second EMAIL: Gmail
+     had already been dialed by the time the duplicate was discovered. A
+     retried request or a second tab now hits this reservation first and
+     is turned away with nothing ever sent. */
+  let reservation = null;
+  try {
+    reservation = await store.reserveSend(entry);
+  } catch (e) {
+    log.error('reserve_failed', { api: 'send', code: classify(e), message: e.message });
+  }
+
+  if (reservation === 'duplicate') {
+    return send(res, 200, Object.assign(describe('SEND_DUPLICATE'), {
+      ok: false, duplicate: true, entry, persisted: false,
+    }));
+  }
+
   const t = gmailTransport(nodemailer, b.user, b.pass, b.port);
 
   /* A follow-up is a reply in the ORIGINAL thread, not a new message: Gmail
@@ -129,20 +148,16 @@ module.exports = log.wrap('send', auth.require(async function handler(req, res) 
     try { t.close(); } catch (e) {}
   }
 
-  /* The database rejects a second send to the same person in the same
-     campaign, whatever the browser believes. A retried request therefore
-     reports 'duplicate' instead of quietly mailing someone twice. */
+  /* The reservation above already claimed this row — this only fills in
+     what actually happened (sent vs failed, the real Message-Id), so it
+     never itself throws a duplicate error. */
   let persisted = false;
-  try {
-    persisted = await store.insert(entry);
-  } catch (e) {
-    log.error('persist_failed', { api: 'send', code: classify(e), message: e.message });
-  }
-
-  if (persisted === 'duplicate') {
-    return send(res, 200, Object.assign(describe('SEND_DUPLICATE'), {
-      ok: false, duplicate: true, entry, persisted: false,
-    }));
+  if (reservation) {
+    try {
+      persisted = await store.finalizeSend(reservation.id, reservation.recipientId, entry);
+    } catch (e) {
+      log.error('persist_failed', { api: 'send', code: classify(e), message: e.message });
+    }
   }
 
   if (entry.status !== 'sent') {
