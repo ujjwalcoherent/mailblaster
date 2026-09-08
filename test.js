@@ -776,9 +776,53 @@ async function storeTests() {
     const s = await store.suppression();
     assert.ok(!s.sent.includes('bob@test.com'), 'bob failed, so he is still to be sent to');
   });
+  await test('suppression(owner) scopes "sent" to that account, not every account', async () => {
+    const mine = await store.suppression('me@gmail.com');
+    assert.ok(mine.sent.includes('alice@test.com'), 'me@gmail.com really did send to alice');
+    const someoneElse = await store.suppression('someone-else@gmail.com');
+    assert.ok(!someoneElse.sent.includes('alice@test.com'),
+      'an account that never sent to alice must not see her as already-sent');
+  });
+  await test('suppression(owner) still reports blocked/replied globally', async () => {
+    // do_not_contact lives on the person, not the campaign — a reply to ANY
+    // account must suppress every account, so this must NOT be owner-scoped.
+    // recordReply()'s address-fallback only matches someone already mailed
+    // (last_sent_at set), so a real send has to happen first — in its own
+    // campaign, so it doesn't perturb the "2 sends in campaignId" count below.
+    const replyTestCampaign = await store.startCampaign({ name: 'reply scoping test', subject: 'Hi', from: 'first-account@gmail.com', total: 1 });
+    await store.insert({ campaignId: replyTestCampaign, time: new Date().toISOString(), from: 'first-account@gmail.com',
+      to: 'replied-globally@test.com', name: 'R', subject: 'Hi', status: 'sent', body: '<p>x</p>' });
+    await store.recordReply({ receivedAt: new Date().toISOString(), from: 'replied-globally@test.com',
+      kind: 'reply', mailbox: 'INBOX', uid: 999001 });
+    const s = await store.suppression('second-account-never-emailed-them@gmail.com');
+    assert.ok(s.blocked.includes('replied-globally@test.com'),
+      'a reply must block every account, even one that never contacted this person');
+  });
   await test('sends can be listed per campaign', async () => {
     const rows = await store.list(50, { campaignId });
     assert.strictEqual(rows.length, 2);
+  });
+
+  group('store — reserveSend() refuses a suppressed person BEFORE any SMTP call would happen');
+  await test('THE GUARD: a brand-new campaign cannot re-mail someone who already replied elsewhere', async () => {
+    // Someone who replied under one campaign must stay blocked in a totally
+    // unrelated, later campaign — not just inside follow-ups.
+    const campA = await store.startCampaign({ name: 'original', subject: 'Hi', from: 'me@gmail.com', total: 1 });
+    await store.insert({ campaignId: campA, time: new Date().toISOString(), from: 'me@gmail.com',
+      to: 'already-replied@test.com', name: 'X', subject: 'Hi', status: 'sent', body: '<p>x</p>' });
+    await store.recordReply({ receivedAt: new Date().toISOString(), from: 'already-replied@test.com',
+      kind: 'reply', mailbox: 'INBOX', uid: 999002 });
+
+    const campB = await store.startCampaign({ name: 'a much later, unrelated campaign', subject: 'Hi', from: 'me@gmail.com', total: 1 });
+    const r = await store.reserveSend({ campaignId: campB, time: new Date().toISOString(), from: 'me@gmail.com',
+      to: 'already-replied@test.com', name: 'X', subject: 'Hi again' });
+    assert.strictEqual(r, 'suppressed', 'a fresh campaign must refuse someone already do_not_contact');
+  });
+  await test('a never-contacted person reserves normally', async () => {
+    const camp = await store.startCampaign({ name: 'normal reserve', subject: 'Hi', from: 'me@gmail.com', total: 1 });
+    const r = await store.reserveSend({ campaignId: camp, time: new Date().toISOString(), from: 'me@gmail.com',
+      to: 'never-contacted@test.com', name: 'X', subject: 'Hi' });
+    assert.ok(r && r.id && r.recipientId, 'expected a real reservation, not a rejection');
   });
 
   group('store — insert()\'s optional returnId, for linking one send onto another (imported thread chains)');
@@ -1025,6 +1069,74 @@ async function frontendLoadTests() {
     // listeners (e.g. dynamically rendered rows) rather than .onclick, so
     // this is a soft check: report, don't fail the suite, on those.
     if (unbound.length) console.log('    (no direct .onclick found on: ' + unbound.join(', ') + ' — may be addEventListener-bound, not necessarily broken)');
+  });
+
+  group('frontend — runSendLoop() shows a suppressed/duplicate send as skipped, not failed');
+  await test('a response with {ok:false, suppressed:true} counts as skipped and shows no raw error text', async () => {
+    const responses = [
+      { ok: false, suppressed: true, entry: { status: 'failed' }, code: 'SEND_SUPPRESSED',
+        error: 'This person has replied, unsubscribed, or hard-bounced, and must not be emailed again.' },
+    ];
+    let i = 0;
+    window.fetch = (url) => {
+      if (String(url).indexOf('/api/send') === 0) return Promise.resolve({ json: () => Promise.resolve(responses[i++]) });
+      return Promise.resolve({ json: () => Promise.resolve({ ok: false }) });
+    };
+
+    await window.runSendLoop({
+      people: [{ email: 'suppressed@test.com', first: 'X' }],
+      campaignId: 1, followupRound: 1, prefix: 'fu',
+      creds: { gUser: 'me@gmail.com', gPass: 'x', smtpPort: '587' },
+      threaded: true,
+    });
+
+    const finalMsg = window.document.getElementById('fuMsg').textContent;
+    assert.ok(finalMsg.indexOf('1 skipped') !== -1, 'expected the skip count in: ' + finalMsg);
+    assert.ok(finalMsg.indexOf('failed') === -1, 'a suppressed send must not be reported as failed: ' + finalMsg);
+    assert.ok(finalMsg.indexOf('replied, unsubscribed') === -1,
+      'the raw server error text must not leak into a skip: ' + finalMsg);
+  });
+  await test('a response with {ok:false, duplicate:true} counts as skipped too', async () => {
+    const responses = [
+      { ok: false, duplicate: true, entry: { status: 'failed' }, code: 'SEND_DUPLICATE',
+        error: 'This person was already sent to in this campaign.' },
+    ];
+    let i = 0;
+    window.fetch = (url) => {
+      if (String(url).indexOf('/api/send') === 0) return Promise.resolve({ json: () => Promise.resolve(responses[i++]) });
+      return Promise.resolve({ json: () => Promise.resolve({ ok: false }) });
+    };
+
+    await window.runSendLoop({
+      people: [{ email: 'dupe@test.com', first: 'X' }],
+      campaignId: 1, followupRound: 0, prefix: 'fu',
+      creds: { gUser: 'me@gmail.com', gPass: 'x', smtpPort: '587' },
+      threaded: false,
+    });
+
+    const finalMsg = window.document.getElementById('fuMsg').textContent;
+    assert.ok(finalMsg.indexOf('1 skipped') !== -1, 'expected the skip count in: ' + finalMsg);
+    assert.ok(finalMsg.indexOf('failed') === -1, 'a duplicate send must not be reported as failed: ' + finalMsg);
+  });
+  await test('a genuine failure (no duplicate/suppressed flag) still counts as failed with its error shown', async () => {
+    const responses = [
+      { ok: false, entry: { status: 'failed' }, code: 'SEND_CONNECTION', error: 'Could not connect to Gmail.' },
+    ];
+    let i = 0;
+    window.fetch = (url) => {
+      if (String(url).indexOf('/api/send') === 0) return Promise.resolve({ json: () => Promise.resolve(responses[i++]) });
+      return Promise.resolve({ json: () => Promise.resolve({ ok: false }) });
+    };
+
+    await window.runSendLoop({
+      people: [{ email: 'realfail@test.com', first: 'X' }],
+      campaignId: 1, followupRound: 0, prefix: 'fu',
+      creds: { gUser: 'me@gmail.com', gPass: 'x', smtpPort: '587' },
+      threaded: false,
+    });
+
+    const finalMsg = window.document.getElementById('fuMsg').textContent;
+    assert.ok(finalMsg.indexOf('1 failed') !== -1, 'a real failure must still be counted as failed: ' + finalMsg);
   });
 }
 

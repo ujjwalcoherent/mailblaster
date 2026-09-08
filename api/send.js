@@ -111,6 +111,11 @@ module.exports = log.wrap('send', auth.require(async function handler(req, res) 
       ok: false, duplicate: true, entry, persisted: false,
     }));
   }
+  if (reservation === 'suppressed') {
+    return send(res, 200, Object.assign(describe('SEND_SUPPRESSED'), {
+      ok: false, suppressed: true, entry, persisted: false,
+    }));
+  }
 
   const t = gmailTransport(nodemailer, b.user, b.pass, b.port);
 

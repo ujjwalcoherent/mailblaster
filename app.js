@@ -2201,7 +2201,12 @@ async function runSendLoop(opts) {
       res = { ok: false, error: e.message };
     }
 
-    if (res.duplicate) skipped++;
+    /* Both are the database correctly refusing to send, not a failure —
+       'duplicate' means this campaign already reached them, 'suppressed'
+       means they replied/unsubscribed/bounced under ANY campaign. Counting
+       either as failed would read as something going wrong when the
+       opposite is true: the safety guarantee is working. */
+    if (res.duplicate || res.suppressed) skipped++;
     else if (res.ok) sent++;
     else failed++;
 
@@ -2211,9 +2216,9 @@ async function runSendLoop(opts) {
     const etaTxt = remaining > 0 ? ' \u00b7 about ' + humanSpan(remaining * avgMsPerSend) + ' left' : '';
     $(p + 'ProgressText').textContent = (i + 1) + ' / ' + total + ' \u00b7 ' + sent + ' delivered'
       + (failed ? ' \u00b7 ' + failed + ' failed' : '')
-      + (skipped ? ' \u00b7 ' + skipped + ' already sent' : '')
+      + (skipped ? ' \u00b7 ' + skipped + ' skipped (already sent or already replied)' : '')
       + etaTxt
-      + (!res.ok && res.error ? ' \u00b7 ' + res.error : '');
+      + (!res.ok && !res.duplicate && !res.suppressed && res.error ? ' \u00b7 ' + res.error : '');
     acctSession.progress = { done: i + 1, total };
     renderAccountList();
 
@@ -2226,7 +2231,7 @@ async function runSendLoop(opts) {
   $(p + 'BtnSend').disabled = false;
   say(msg, (stopped ? '\u25a0 Stopped \u2014 ' : '\u2713 Finished \u2014 ') + sent + ' delivered'
     + (failed ? ', ' + failed + ' failed' : '')
-    + (skipped ? ', ' + skipped + ' skipped as already sent' : '') + '.',
+    + (skipped ? ', ' + skipped + ' skipped (already sent or already replied)' : '') + '.',
     !stopped && !failed);
   renderAccountList();
   refreshQuota(opts.creds.gUser);
