@@ -116,22 +116,6 @@ window.fetch = function (input, init) {
   return rawFetch(input, init);
 };
 
-/* A 401 means the key is missing or wrong; say so once, plainly, rather than
-   letting every panel fail with its own vague message. */
-let keyPromptShown = false;
-async function apiGet(url) {
-  const r = await fetch(url).then(x => x.json());
-  if (r && r.code === 'UNAUTHORIZED') promptForKey();
-  return r;
-}
-function promptForKey() {
-  if (keyPromptShown) return;
-  keyPromptShown = true;
-  const v = prompt('This deployment requires an API key.\n\n'
-    + 'Paste the value of MAILBLASTER_API_KEY from your Vercel project settings.');
-  if (v) { setApiKey(v.trim()); location.reload(); }
-}
-
 /* Wire the API key field, and tell the user whether this deployment needs one
    so an empty box is never mistaken for a broken page. */
 if ($('apiKeyInput')) {
@@ -484,6 +468,14 @@ function renderAccountList() {
       + '<div class="acctfield"><span class="acctfieldlbl">Sent today</span><span class="acctfieldval">' + quotaCell + '</span></div>'
       + '</div>'
       + '<div class="acctactions">'
+      /* Unchecking a multi-account compose window mid-send tears down that
+         window's DOM (including its own Stop button) while the send loop
+         keeps running in the background — the account card was the only
+         place still showing "sending N/M" for it, but had no way to
+         interrupt it. This button is the one control that survives that:
+         it's bound to this account's OWN session regardless of whether any
+         mail window for it is currently mounted anywhere. */
+      + (s.sending ? '<button class="danger stop" data-email="' + esc(email) + '">Stop</button>' : '')
       + '<button class="edit" data-email="' + esc(email) + '">Edit</button>'
       + '<button class="danger remove" data-email="' + esc(email) + '">Remove</button>'
       + '</div>'
@@ -492,6 +484,10 @@ function renderAccountList() {
 
   host.querySelectorAll('.edit').forEach(b => b.onclick = () => { selectAccount(b.dataset.email); showAccountFormBox(); });
   host.querySelectorAll('.remove').forEach(b => b.onclick = () => removeAccount(b.dataset.email));
+  host.querySelectorAll('.stop').forEach(b => b.onclick = () => {
+    const s = session(b.dataset.email);
+    if (s) s.stopRequested = true;
+  });
 }
 
 /* Gmail's own daily cap (500 recipients/24h on a personal account, enforced
@@ -832,7 +828,11 @@ function renderCsvMapping() {
   });
 
   const hasEmail = csvMapping.some(m => m.role === 'email');
-  $('btnCsvImport').classList.toggle('hidden', !hasEmail);
+  /* Disabled, not hidden: the button vanishing entirely reads as "the
+     feature broke," not "fix your mapping" — a disabled button with the
+     reason right next to it stays visibly present and explains itself. */
+  $('btnCsvImport').classList.remove('hidden');
+  $('btnCsvImport').disabled = !hasEmail;
   if (!hasEmail) say($('csvMsg'), 'No column is mapped to Email — pick one above before importing.', false);
   else say($('csvMsg'), '', true);
 }
@@ -1207,6 +1207,7 @@ function mountCompose(prefix) {
         !confirm('That image is ' + (f.size / 1048576).toFixed(1) + ' MB. Big signatures slow every send '
                + 'and can trip spam filters. Use it anyway?')) {
       $(prefix + 'FooterImg').value = '';
+      say($(prefix + 'Msg'), 'Signature image not attached — too large.', false);
       return;
     }
     const b64 = await readFileB64(f);
@@ -1387,7 +1388,7 @@ async function sendFromWindow(prefix, opts) {
     if (!confirm('Attachments total ' + (totalBytes / 1048576).toFixed(1) + ' MB. Hosted serverless functions '
       + 'usually cap a request body around 4.5 MB, so this may fail online (it is fine locally). Continue?')) return;
   }
-  if (!opts.skipConfirm && !confirm('Send to ' + list.length + ' recipient(s)?')) return;
+  if (!opts.skipConfirm && !confirm('Send to ' + list.length + ' recipient(s) from ' + c.gUser + '?')) return;
 
   /* Start a real campaign row before sending anything. Without this, every
      send in this loop would persist with campaign_id = NULL: Section 5 would
@@ -1699,10 +1700,22 @@ if ($('composeMultiBtnSend')) $('composeMultiBtnSend').onclick = async () => {
   // each is already isolated by its own account session (AccountSession),
   // so this is not a new concurrency mechanism, just several existing ones
   // kicked off at once instead of one at a time.
-  await Promise.all(entries.map(([, prefix]) =>
-    sendFromWindow(prefix, { skipConfirm: true, skipRepeatCheck: false, groupKey })));
+  const results = await Promise.all(entries.map(([email, prefix]) =>
+    sendFromWindow(prefix, { skipConfirm: true, skipRepeatCheck: false, groupKey })
+      .then(r => ({ email, r }))));
 
-  say($('composeMultiMsg'), 'All checked accounts have finished (or stopped).', true);
+  /* The shared message only ever said "finished (or stopped)" regardless of
+     whether one account failed outright (bad password, connection refused —
+     every send in that window fails). Each window's own Msg area already
+     shows this, but a user watching only the shared box had no signal to go
+     look — so name which accounts actually had failures, right here. */
+  const withFailures = results.filter(({ r }) => r && r.failed > 0);
+  const summary = 'All checked accounts have finished (or stopped).'
+    + (withFailures.length
+        ? ' ' + withFailures.length + ' account(s) had failures: '
+          + withFailures.map(({ email, r }) => email + ' (' + r.failed + ')').join(', ') + '.'
+        : '');
+  say($('composeMultiMsg'), summary, !withFailures.length);
 };
 
 renderComposeAccountPicker();
@@ -1912,7 +1925,7 @@ async function scanRepliesFor(email, days) {
 }
 
 async function scanReplies() {
-  if (scanning) return;
+  if (scanning) return say($('replyMsg'), 'Already scanning another account — wait for it to finish, then try again.', false);
   const c = creds();
   if (!c.gUser || !c.gPass) {
     return say($('replyMsg'), 'Add your Gmail address and App Password in Section 1 first.', false);
@@ -2073,6 +2086,16 @@ function updateFollowupCount() {
 if ($('fuCap')) $('fuCap').addEventListener('change', loadFollowupAudience);
 if ($('fuCampaign')) $('fuCampaign').addEventListener('change', loadFollowupAudience);
 
+/* Which account's follow-up is actually running right now, set at the start
+   of sendFollowup() and read by fuBtnStop — NOT activeAccountEmail, which
+   the user can change (by clicking a different account card in Section 1)
+   while the follow-up is still in flight. Reading activeAccount() at click
+   time meant Stop could silently arm the WRONG account's stopRequested
+   flag, leaving the real follow-up running with no way to stop it from the
+   UI — the same class of bug the runSendLoop()/AccountSession split above
+   already exists to prevent for the compose and generic send loops. */
+let runningFollowupOwner = null;
+
 /* Send the follow-up as a reply in the original thread. */
 async function sendFollowup() {
   const campaignId = $('fuCampaign').value;
@@ -2100,7 +2123,7 @@ async function sendFollowup() {
 
   const audience = selectedAudience();
   if (!audience.length) return say($('fuMsg'), 'Nobody matches the chosen audience.', false);
-  if (!confirm('Send a follow-up to ' + audience.length + ' recipient(s)?\n\n'
+  if (!confirm('Send a follow-up to ' + audience.length + ' recipient(s) from ' + owner + '?\n\n'
     + 'It goes out as a reply in the original thread.')) return;
 
   let started;
@@ -2123,20 +2146,25 @@ async function sendFollowup() {
   /* The server rebuilt the audience at this moment, so use ITS list rather
      than what the page was showing. */
   const people = started.candidates || audience;
-  await runSendLoop({
-    people: people,
-    campaignId: started.campaignId,
-    followupRound: started.followupRound,
-    prefix: 'fu',
-    creds: c,
-    threaded: true,
-  });
+  runningFollowupOwner = owner;
+  try {
+    await runSendLoop({
+      people: people,
+      campaignId: started.campaignId,
+      followupRound: started.followupRound,
+      prefix: 'fu',
+      creds: c,
+      threaded: true,
+    });
+  } finally {
+    runningFollowupOwner = null;
+  }
   loadCampaigns();
   loadFollowupAudience();
 }
 if ($('fuBtnSend')) $('fuBtnSend').onclick = sendFollowup;
 if ($('fuBtnStop')) $('fuBtnStop').onclick = function () {
-  const s = activeAccount();
+  const s = session(runningFollowupOwner || activeAccountEmail);
   if (s) s.stopRequested = true;
   say($('fuMsg'), 'Stopping after the current email\u2026', false);
 };
