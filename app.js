@@ -136,9 +136,28 @@ function promptForKey() {
    so an empty box is never mistaken for a broken page. */
 if ($('apiKeyInput')) {
   $('apiKeyInput').value = apiKey();
-  $('btnSaveKey').onclick = function () {
-    setApiKey($('apiKeyInput').value.trim());
-    say($('apiKeyMsg'), 'Saved. Reloading…', true);
+  /* Save used to reload blindly on whatever was typed — a wrong or
+     stale-pasted key (trailing whitespace, wrong box, copied from an old
+     deployment) only surfaced later as an unexplained 401 on some other
+     action. Checking the key against the server BEFORE reloading means a
+     mistake is caught right here, with the actual reason, instead of
+     turning into "everything is broken" somewhere else in the app. */
+  $('btnSaveKey').onclick = async function () {
+    const v = $('apiKeyInput').value.trim();
+    say($('apiKeyMsg'), 'Checking…', true);
+    try {
+      const r = await rawFetch('/api/log', { headers: v ? { 'X-API-Key': v } : {} }).then(x => x.json());
+      if (r && r.code === 'UNAUTHORIZED') {
+        say($('apiKeyMsg'), '✗ That key was rejected by the server. Double-check it was copied '
+          + 'exactly (no extra spaces) from Vercel → Settings → Environment Variables → MAILBLASTER_API_KEY.', false);
+        return;
+      }
+    } catch (e) {
+      say($('apiKeyMsg'), '✗ Could not reach the server to check the key: ' + e.message, false);
+      return;
+    }
+    setApiKey(v);
+    say($('apiKeyMsg'), '✓ Key accepted. Reloading…', true);
     setTimeout(function () { location.reload(); }, 500);
   };
   $('btnClearKey').onclick = function () {

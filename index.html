@@ -250,8 +250,10 @@
     <summary>Deployment API key <small id="apiKeyState">not required here</small></summary>
     <div class="msectionbody">
       <p class="hint">A hosted deployment sets <span class="mono">MAILBLASTER_API_KEY</span> so its
-         campaign history cannot be read or deleted by anyone who knows the URL. Paste that value
-         here. It is stored in this browser only, and sent only to this site.</p>
+         campaign history cannot be read or deleted by anyone who knows the URL. Paste that same
+         value here — whoever set up this deployment has it (Vercel project → Settings →
+         Environment Variables → <span class="mono">MAILBLASTER_API_KEY</span>). It is stored in
+         this browser only, and sent only to this site.</p>
       <label class="mfield">Key
         <input id="apiKeyInput" type="password" autocomplete="off" placeholder="paste the deployment key"/>
       </label>

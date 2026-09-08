@@ -55,9 +55,14 @@ is a convenience for showing the right history, not a security boundary.
 The key is compared in constant time (`lib/auth.js`); a plain `===` leaks the
 position of the first wrong character through timing.
 
-**Credentials.** The Gmail App Password is sent per request and never stored,
-logged, or written to the database. Only the sending address is persisted, as
-the key that scopes history to an account.
+**Credentials.** The Gmail App Password is sent per request and never logged
+(`lib/log.js` redacts it). It is **not stored in the database by default** —
+only the sending address is persisted, as the key that scopes history to an
+account. The one exception: `POST /api/accounts` opt-in-saves it, encrypted
+(AES-256-GCM, `lib/crypto.js`) under a server-only `ACCOUNTS_ENCRYPTION_KEY`,
+so a successful Verify can be remembered across browsers/devices without
+retyping it. Without that env var set, `/api/accounts` refuses to store
+anything rather than falling back to plaintext.
 
 **Logging.** Each request emits one JSON line (`lib/log.js`) with the endpoint,
 method, status and duration. Passwords, tokens and message bodies are redacted
