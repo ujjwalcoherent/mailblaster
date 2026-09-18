@@ -510,7 +510,7 @@ async function importerTests() {
   group('importer — plainTextPart() finds the real text/plain part (not RFC 3501 BODY[TEXT])');
   const { plainTextPart } = require('./lib/imap');
   await test('a plain single-part message (no childNodes) is part "1"', () => {
-    assert.deepStrictEqual(plainTextPart({ type: 'text/plain' }), { part: '1' });
+    assert.deepStrictEqual(plainTextPart({ type: 'text/plain' }), { part: '1', encoding: undefined });
   });
   await test('multipart/alternative picks the text/plain child, not part "1" blindly', () => {
     const structure = {
@@ -520,7 +520,7 @@ async function importerTests() {
         { part: '2', type: 'text/html' },
       ],
     };
-    assert.deepStrictEqual(plainTextPart(structure), { part: '1' });
+    assert.deepStrictEqual(plainTextPart(structure), { part: '1', encoding: undefined });
   });
   await test('text/plain can be found even when it is not the first child', () => {
     const structure = {
@@ -530,11 +530,11 @@ async function importerTests() {
         { part: '2', type: 'text/plain' },
       ],
     };
-    assert.deepStrictEqual(plainTextPart(structure), { part: '2' });
+    assert.deepStrictEqual(plainTextPart(structure), { part: '2', encoding: undefined });
   });
   await test('falls back to text/html (flagged) when there is no text/plain alternative at all', () => {
     const structure = { type: 'multipart/mixed', childNodes: [{ part: '1', type: 'text/html' }] };
-    assert.deepStrictEqual(plainTextPart(structure), { part: '1', html: true });
+    assert.deepStrictEqual(plainTextPart(structure), { part: '1', html: true, encoding: undefined });
   });
   await test('nested multipart (e.g. mixed containing an alternative) is walked recursively', () => {
     const structure = {
@@ -547,7 +547,22 @@ async function importerTests() {
         { part: '2', type: 'application/pdf' },   // an attachment alongside the body
       ],
     };
-    assert.deepStrictEqual(plainTextPart(structure), { part: '1.1' });
+    assert.deepStrictEqual(plainTextPart(structure), { part: '1.1', encoding: undefined });
+  });
+  await test('carries the part\'s own Content-Transfer-Encoding through, so the caller can decode correctly', () => {
+    // THE BUG: a base64 or quoted-printable HTML part was being read as if it
+    // were already plain UTF-8 text — the raw wire bytes, undecoded, ended up
+    // stored as a send's body and shown in "View" as a wall of base64 rather
+    // than the actual email. Carrying `encoding` here is what lets textOf()
+    // (lib/imap.js) decode it before anyone treats it as text.
+    const structure = {
+      type: 'multipart/alternative',
+      childNodes: [
+        { part: '1', type: 'text/plain', encoding: 'quoted-printable' },
+        { part: '2', type: 'text/html', encoding: 'base64' },
+      ],
+    };
+    assert.deepStrictEqual(plainTextPart(structure), { part: '1', encoding: 'quoted-printable' });
   });
   await test('no usable text part at all (e.g. a structure with only an attachment) returns null, not garbage', () => {
     const structure = { type: 'multipart/mixed', childNodes: [{ part: '1', type: 'application/pdf' }] };
@@ -566,6 +581,26 @@ async function importerTests() {
   });
   await test('no partInfo (nothing usable was found) returns empty rather than throwing', () => {
     assert.strictEqual(textOf({ bodyParts: new Map() }, null), '');
+  });
+  await test('THE BUG: a base64 HTML part is decoded, not returned as raw base64 text', () => {
+    // This is exactly what reached a real send's stored body before the fix:
+    // Buffer.toString('utf8') on base64 wire bytes just returns the base64
+    // alphabet itself, which is what showed up as "the body is just numbers"
+    // in the UI's View and in the importer's own template preview.
+    const html = '<p>Hello <b>there</b></p>';
+    const wire = Buffer.from(Buffer.from(html, 'utf8').toString('base64'), 'ascii');
+    const msg = { bodyParts: new Map([['1', wire]]) };
+    assert.strictEqual(textOf(msg, { part: '1', html: true, encoding: 'base64' }), 'Hello there');
+  });
+  await test('a quoted-printable part is decoded, not left with =XX escapes and soft line breaks', () => {
+    const wire = Buffer.from('Caf=C3=A9 result=\r\nfor you');   // "Café result\r\nfor you" QP-encoded, soft-wrapped
+    const msg = { bodyParts: new Map([['1', wire]]) };
+    assert.strictEqual(textOf(msg, { part: '1', encoding: 'quoted-printable' }), 'Café resultfor you');
+  });
+  await test('plain 7bit/8bit text (no encoding, or unrecognised) passes through unchanged', () => {
+    const msg = { bodyParts: new Map([['1', Buffer.from('Hello there')]]) };
+    assert.strictEqual(textOf(msg, { part: '1', encoding: '7bit' }), 'Hello there');
+    assert.strictEqual(textOf(msg, { part: '1', encoding: undefined }), 'Hello there');
   });
 
   group('importer — linkThreadPositions() reconstructs follow-up rounds for imported campaigns');
