@@ -13,38 +13,65 @@
  * auth header, so this endpoint is protected by a shared secret in the URL
  * itself instead — set on the SendGrid side when adding the Host & URL.
  *
- * Must always respond 200 quickly: SendGrid retries on non-2xx, and a slow or
- * failing endpoint gets Inbound Parse suspended for the whole account.
+ * No multipart-parsing library: this repo is deliberately dependency-light
+ * (see README/CLAUDE.md — "no framework, no build step"), and SendGrid's
+ * Parse payload is a small, fixed set of plain-text fields (from, to,
+ * subject, text, html, headers, envelope, spam_score) — attachments are the
+ * only binary parts, and this endpoint doesn't need them, so a full
+ * multipart library is more risk (exactly the extra dependency that broke
+ * the last two deployments — see git history) than a ~30-line parser scoped
+ * to this one known shape.
+ *
+ * Must always respond 200 quickly: SendGrid retries on non-2xx, and a slow
+ * or failing endpoint gets Inbound Parse suspended for the whole account.
  */
-const Busboy = require('busboy');
 const store = require('../lib/store');
 const { classifyMessage } = require('../lib/classify');
 const log = require('../lib/log');
 
-function parseMultipart(req) {
+function readRawBody(req) {
   return new Promise((resolve, reject) => {
-    const fields = {};
-    const bb = Busboy({ headers: req.headers, limits: { fieldSize: 25 * 1024 * 1024 } });
-    bb.on('field', (name, val) => { fields[name] = val; });
-    bb.on('file', (name, stream) => { stream.resume(); }); // attachments: drained, not stored (for now)
-    bb.on('error', reject);
-    bb.on('finish', () => resolve(fields));
-    req.pipe(bb);
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
   });
+}
+
+/* Text-field-only multipart/form-data parser. Any part whose Content-Disposition
+   carries a filename= (i.e. an attachment) is skipped entirely — this endpoint
+   only needs the plain-text fields SendGrid always sends alongside them. */
+function parseMultipartFields(buf, boundary) {
+  const fields = {};
+  const delim = Buffer.from('--' + boundary);
+  let start = buf.indexOf(delim);
+  while (start !== -1) {
+    const next = buf.indexOf(delim, start + delim.length);
+    if (next === -1) break;
+    const part = buf.slice(start + delim.length, next);
+    const headerEnd = part.indexOf('\r\n\r\n');
+    if (headerEnd !== -1) {
+      const headerText = part.slice(0, headerEnd).toString('utf8');
+      const nameMatch = headerText.match(/name="([^"]+)"/);
+      const isFile = /filename="/.test(headerText);
+      if (nameMatch && !isFile) {
+        let value = part.slice(headerEnd + 4);
+        // strip the trailing CRLF that precedes the next boundary
+        if (value.slice(-2).toString() === '\r\n') value = value.slice(0, -2);
+        fields[nameMatch[1]] = value.toString('utf8');
+      }
+    }
+    start = next;
+  }
+  return fields;
 }
 
 /* SendGrid's `headers` field is the raw RFC 5322 header block as one string.
    classifyMessage()/header() expect a plain {name: value} object (same shape
-   ImapFlow's parsed headers take on the IMAP side), so parse it into one —
-   passing the raw string through untouched would silently break every
-   header() lookup (Object.keys() on a string gives numeric indices, not
-   header names). */
+   ImapFlow's parsed headers take on the IMAP side), so parse it into one. */
 function parseRawHeaders(raw) {
   const out = {};
   if (!raw) return out;
-  // Unfold continuation lines (a header wrapped onto the next line starts
-  // with whitespace) before splitting, or a folded value gets treated as
-  // its own bogus header.
   const unfolded = String(raw).replace(/\r\n[ \t]+/g, ' ').replace(/\n[ \t]+/g, ' ');
   for (const line of unfolded.split(/\r?\n/)) {
     const m = line.match(/^([^:]+):\s*(.*)$/);
@@ -62,12 +89,22 @@ module.exports = log.wrap('sendgrid-inbound', async function handler(req, res) {
     return res.end();
   }
 
+  const contentType = req.headers['content-type'] || '';
+  const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/);
+  if (!boundaryMatch) {
+    log.error('sendgrid_inbound_no_boundary', { contentType });
+    res.statusCode = 200; // not our SendGrid config's fault necessarily — never retry-storm on this
+    return res.end();
+  }
+  const boundary = boundaryMatch[1] || boundaryMatch[2];
+
   let fields;
   try {
-    fields = await parseMultipart(req);
+    const raw = await readRawBody(req);
+    fields = parseMultipartFields(raw, boundary);
   } catch (e) {
     log.error('sendgrid_inbound_parse_failed', { error: String(e) });
-    res.statusCode = 200; // still 200 — a malformed one-off should not trigger endless SendGrid retries
+    res.statusCode = 200;
     return res.end();
   }
 
